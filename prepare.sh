@@ -14,7 +14,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     autoconf automake cmake \
     libusb libarchive gpgme \
     bash openssl libtool \
-    zlib libmpc makepkg meson
+    zlib libmpc meson
     brew reinstall openssl # https://github.com/Homebrew/homebrew-core/issues/169728#issuecomment-2074958306
   fi
 else
@@ -32,12 +32,12 @@ else
         apt-get update
         apt-get -y install texinfo bison flex gettext libgmp3-dev libmpfr-dev libmpc-dev libusb-1.0-0-dev libreadline-dev libcurl4 \
         libcurl4-openssl-dev libssl-dev libarchive-dev libgpgme-dev cmake libncurses-dev automake pkg-config \
-        wget libtool libz-dev makepkg meson ninja-build
+        wget libtool libz-dev meson ninja-build
     ;;
     rhel | fedora)
          dnf -y install @development-tools gcc gcc-c++ g++ wget git autoconf automake make cmake pkgconf \
           libarchive-devel openssl-devel gpgme-devel libtool gettext texinfo bison flex gmp-devel mpfr-devel libmpc-devel ncurses-devel diffutils \
-          libusb1-devel readline-devel libcurl-devel which glibc-gconv-extra xz gawk file makepkg meson ninja-build
+          libusb1-devel readline-devel libcurl-devel which glibc-gconv-extra xz gawk file meson ninja-build
     ;;
     gentoo)
         emerge --noreplace net-misc/wget dev-vcs/git sys-apps/fakeroot \
