@@ -30,7 +30,7 @@ else
 
     ubuntu | linuxmint | debian | pop)
         apt-get update
-        apt-get -y install texinfo bison flex gettext libgmp3-dev libmpfr-dev libmpc-dev libusb-1.0-0-dev libreadline-dev libcurl4 \
+        apt-get -y --no-install-recommends install texinfo bison flex gettext libgmp3-dev libmpfr-dev libmpc-dev libusb-1.0-0-dev libreadline-dev libcurl4 \
         libcurl4-openssl-dev libssl-dev libarchive-dev libgpgme-dev cmake libncurses-dev automake pkg-config \
         wget libtool libz-dev meson ninja-build
     ;;
@@ -45,10 +45,10 @@ else
                                         dev-libs/mpc dev-libs/libusb dev-build/ninja dev-build/meson
     ;;
     arch | manjaro | endeavouros | cachyos)
-        pacman -Sy gcc clang make cmake patch git texinfo flex bison gettext wget gsl gmp mpfr libmpc libusb readline libarchive gpgme bash openssl libtool boost meson ninja
+        pacman -S --needed gcc clang make cmake patch git texinfo flex bison gettext wget gsl gmp mpfr libmpc libusb readline libarchive gpgme bash openssl libtool boost meson ninja
     ;;
     opensuse*)
-      zypper install -y gcc gcc-c++ clang binutils patch make cmake bison flex gpgme libgpgme-devel libarchive-devel openssl libopenssl-devel ncurses ncurses-devel gmp-devel mpfr-devel mpc-devel \
+      zypper install -y --no-recommends --auto-agree-with-licenses gcc gcc-c++ clang binutils patch make cmake bison flex gpgme libgpgme-devel libarchive-devel openssl libopenssl-devel ncurses ncurses-devel gmp-devel mpfr-devel mpc-devel \
       automake meson ninja
     ;;
     *)
