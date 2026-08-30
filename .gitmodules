@@ -1,0 +1,4 @@
+[submodule "components/pspsdk"]
+	path = components/pspsdk
+	url = https://github.com/StochasticEagle/pspsdk.git
+	shallow = true
