@@ -6,7 +6,7 @@ if [ -z "$LOCAL_PACKAGE_BUILD" ]; then
 	psp-pacman -Sy && psp-pacman -S --noconfirm psp-libraries || { exit 1; }
 else
 	## Download the source code.
-	REPO_URL="https://github.com/pspdev/psp-packages"
+	REPO_URL="https://github.com/StochasticEagle/psp-packages"
 	REPO_FOLDER="psp-packages"
 	BRANCH_NAME="master"
 	if test ! -d "$REPO_FOLDER"; then

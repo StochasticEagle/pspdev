@@ -2,8 +2,8 @@
 # psptoolchain.sh by fjtrujy
 
 ## Download the source code.
-REPO_URL="https://github.com/pspdev/psptoolchain"
-REPO_FOLDER="psptoolchain"
+REPO_URL="https://github.com/StochasticEagle/psp-toolchain"
+REPO_FOLDER="psp-toolchain"
 BRANCH_NAME="master"
 if test ! -d "$REPO_FOLDER"; then
 	git clone --depth 1 -b $BRANCH_NAME $REPO_URL && cd $REPO_FOLDER || { exit 1; }

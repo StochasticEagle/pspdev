@@ -6,7 +6,7 @@ set -e
 OUTPUT_FILE="$(mktemp)"
 
 # All the repos of which changes land in the release
-REPOS="pspdev pspsdk psptoolchain psptoolchain-allegrex psptoolchain-extra psp-packages psplinkusb psp-pacman ebootsigner"
+REPOS="pspdev pspsdk psp-toolchain psp-toolchain-allegrex psp-packages psp-linkusb psp-pacman psp-ebootsigner"
 
 # Get the timestamp and name of the latest release of pspdev/pspdev
 LAST_RELEASE="$(curl -sfL \

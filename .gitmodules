@@ -2,3 +2,8 @@
 	path = components/pspsdk
 	url = https://github.com/StochasticEagle/pspsdk.git
 	shallow = true
+[submodule "components/psp-toolchain"]
+	path = components/psp-toolchain
+	url = https://github.com/StochasticEagle/psp-toolchain.git
+	branch = master
+	shallow = true

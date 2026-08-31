@@ -2,8 +2,8 @@
 # psplinkusb by fjtrujy
 
 ## Download the source code.
-REPO_URL="https://github.com/pspdev/psplinkusb"
-REPO_FOLDER="psplinkusb"
+REPO_URL="https://github.com/StochasticEagle/psp-linkusb"
+REPO_FOLDER="psp-linkusb"
 BRANCH_NAME="master"
 if test ! -d "$REPO_FOLDER"; then
 	git clone --depth 1 -b $BRANCH_NAME $REPO_URL && cd $REPO_FOLDER || { exit 1; }
@@ -27,6 +27,6 @@ fi
 ## Store build information
 BUILD_FILE="${PSPDEV}/build.txt"
 if [[ -f "${BUILD_FILE}" ]]; then
-  sed -i'' '/^psplinkusb /d' "${BUILD_FILE}"
+  sed -i'' '/^psp-linkusb /d' "${BUILD_FILE}"
 fi
-git log -1 --format="psplinkusb %H %cs %s" >> "${BUILD_FILE}"
+git log -1 --format="psp-linkusb %H %cs %s" >> "${BUILD_FILE}"
