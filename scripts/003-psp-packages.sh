@@ -6,19 +6,23 @@ set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${ROOT}/components/psp-packages"
 
-if [ -z "${LOCAL_PACKAGE_BUILD:-}" ]; then
-	## Install prebuilt packages.
-	psp-pacman -Sy
-	psp-pacman -S --noconfirm psp-libraries
-else
-	if [ ! -f "${SOURCE}/build.sh" ]; then
-		echo "ERROR: psp-packages submodule is not initialized."
-		echo "Run: git submodule update --init --recursive --depth=1"
-		exit 1
-	fi
-
-	cd "${SOURCE}"
-
-	## Build and install packages locally.
-	./build.sh --install
+if [ ! -d "${SOURCE}" ]; then
+    echo "ERROR: psp-packages submodule is not initialized."
+    echo "Run: git submodule update --init --depth=1 components/psp-packages"
+    exit 1
 fi
+
+shopt -s nullglob globstar
+PACKAGES=("${SOURCE}"/**/*.pkg.tar.*)
+shopt -u globstar nullglob
+
+if (( ${#PACKAGES[@]} == 0 )); then
+    echo "ERROR: No locally built PSP packages were found in:"
+    echo "  ${SOURCE}"
+    echo "Stage 3 does not download or build packages."
+    exit 1
+fi
+
+echo "Installing ${#PACKAGES[@]} locally built PSP packages..."
+
+psp-pacman -U --noconfirm "${PACKAGES[@]}" --overwrite '*'
