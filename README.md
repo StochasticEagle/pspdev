@@ -26,7 +26,7 @@ This program will automatically build and install the whole compiler and other t
 
 ## Up and running
 
-You can get started very quickly by grabbing the latest development pre-releases from the [releases' page for your platform](https://github.com/pspdev/pspdev/releases) and extract them to the `pspdev` directory in your `path`.
+You can get started very quickly by grabbing the latest development pre-releases from the [releases' page for your platform](https://github.com/StochasticEagle/pspdev/releases) and extract them to the `pspdev` directory in your `path`.
 
 Export the `PSPDEV` environment variable to point to the `pspdev` directory. For example:
 
@@ -39,11 +39,11 @@ export PATH=$PATH:$PSPDEV/bin
 
 These scripts download (`git clone`) and install:
 
-- [psptoolchain](https://github.com/pspdev/psptoolchain "psptoolchain")
-- [pspsdk](https://github.com/pspdev/pspsdk "pspsdk")
-- [psp-packages](https://github.com/pspdev/psp-packages "psp-packages")
-- [psplinkusb](https://github.com/pspdev/psplinkusb "psplinkusb")
-- [ebootsigner](https://github.com/pspdev/ebootsigner "ebootsigner")
+- [psptoolchain](https://github.com/StochasticEagle/psp-toolchain "psp-toolchain")
+- [pspsdk](https://github.com/StochasticEagle/pspsdk "pspsdk")
+- [psp-packages](https://github.com/StochasticEagle/psp-packages "psp-packages")
+- [psplinkusb](https://github.com/StochasticEagle/psp-linkusb "psp-linkusb")
+- [ebootsigner](https://github.com/StochasticEagle/psp-ebootsigner "psp-ebootsigner")
 
 ## Requirements
 
@@ -110,7 +110,7 @@ xattr -dr com.apple.quarantine path/to/prebuilt/pspdev
 
 ### Local package builds
 
-The toolchain (binutils, gcc), the SDK (pspsdk) and the host tools are built locally. However, the provided packages (psp-packages) are installed via `psp-pacman` (or a similar mechanism if not available), which fetches packages from [GitHub releases](https://github.com/pspdev/psp-packages/releases). If you wish to build these packages locally, you might define the variable _LOCAL_PACKAGE_BUILD_ which will force pacman to build the packages from source instead of downloading them:
+The toolchain (binutils, gcc), the SDK (pspsdk) and the host tools are built locally. However, the provided packages (psp-packages) are installed via `psp-pacman` (or a similar mechanism if not available), which fetches packages from [GitHub releases](https://github.com/StochasticEagle/psp-packages/releases). If you wish to build these packages locally, you might define the variable _LOCAL_PACKAGE_BUILD_ which will force pacman to build the packages from source instead of downloading them:
 
 ```bash
 LOCAL_PACKAGE_BUILD=1 ./build-all.sh

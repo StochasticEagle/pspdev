@@ -1,28 +1,24 @@
 #!/bin/bash
 # psp-packages by fjtrujy
 
-if [ -z "$LOCAL_PACKAGE_BUILD" ]; then
-	# Install all packages
-	psp-pacman -Sy && psp-pacman -S --noconfirm psp-libraries || { exit 1; }
+set -e
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE="${ROOT}/components/psp-packages"
+
+if [ -z "${LOCAL_PACKAGE_BUILD:-}" ]; then
+	## Install prebuilt packages.
+	psp-pacman -Sy
+	psp-pacman -S --noconfirm psp-libraries
 else
-	## Download the source code.
-	REPO_URL="https://github.com/StochasticEagle/psp-packages"
-	REPO_FOLDER="psp-packages"
-	BRANCH_NAME="master"
-	if test ! -d "$REPO_FOLDER"; then
-		git clone --depth 1 -b $BRANCH_NAME $REPO_URL && cd $REPO_FOLDER || { exit 1; }
-	else
-		cd $REPO_FOLDER && git fetch origin && git reset --hard origin/${BRANCH_NAME} || { exit 1; }
+	if [ ! -f "${SOURCE}/build.sh" ]; then
+		echo "ERROR: psp-packages submodule is not initialized."
+		echo "Run: git submodule update --init --recursive --depth=1"
+		exit 1
 	fi
 
+	cd "${SOURCE}"
 
-	# WIndows currently doesn't have pacman, so packages needs to be installed manually
-	OSVER=$(uname)
-	install_method="pacman"
-	if [ "${OSVER:0:5}" == MINGW ]; then
-		install_method="manually"
-	fi
-
-	# Build and install the packages
+	## Build and install packages locally.
 	./build.sh --install
 fi

@@ -1,55 +1,64 @@
 #!/bin/bash
-# toolchain.sh by fjtrujy
+# build-all.sh by fjtrujy
 
-## Enter the pspdev directory.
-cd "$(dirname "$0")" || { echo "ERROR: Could not enter the pspdev directory."; exit 1; }
+set -e
 
-## Create the build directory.
-mkdir -p build || { echo "ERROR: Could not create the build directory."; exit 1; }
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-## Enter the build directory.
-cd build || { echo "ERROR: Could not enter the build directory."; exit 1; }
-
-## Fetch the depend scripts.
-DEPEND_SCRIPTS=($(ls ../depends/*.sh | sort))
-
-## Run all the depend scripts.
-for SCRIPT in ${DEPEND_SCRIPTS[@]}; do "$SCRIPT" || { echo "$SCRIPT: Failed."; exit 1; } done
-
-## Check if repo is in a tag, to install this specfic PSP Dev environment
-if git describe --exact-match --tags $(git log -n1 --pretty='%h') >/dev/null 2>&1; then
-  TAG=$(git describe --exact-match --tags $(git log -n1 --pretty='%h'))
-  if [ "$TAG" = "latest" ]; then
-    ## Ignore latest tag, as this tag is for service purposes only
-    echo "Installing latest environment status"
-    TAG="";
-  else
-    echo "Instaling specific version $TAG";
-  fi
-else
-  echo "Installing latest environment status"
-  TAG=""
+## PSPDEV is the authoritative installation location.
+if [ -z "${PSPDEV:-}" ]; then
+    echo "ERROR: PSPDEV environment variable is not set."
+    exit 1
 fi
 
-## Fetch the build scripts.
-BUILD_SCRIPTS=($(ls ../scripts/*.sh | sort))
+## Ensure tools installed earlier in the build are used by later stages.
+export PATH="${PSPDEV}/bin:${PATH}"
+
+## Collect dependency and build scripts.
+shopt -s nullglob
+DEPEND_SCRIPTS=("${ROOT}"/depends/*.sh)
+BUILD_SCRIPTS=("${ROOT}"/scripts/*.sh)
+shopt -u nullglob
+
+## Run dependency checks.
+for SCRIPT in "${DEPEND_SCRIPTS[@]}"; do
+    "${SCRIPT}"
+done
+
+if (( ${#BUILD_SCRIPTS[@]} == 0 )); then
+    echo "ERROR: No build scripts found."
+    exit 1
+fi
 
 ## If specific steps were requested...
-if [ "$1" ]; then
+if (( $# > 0 )); then
 
-  ## Run the requested build scripts.
-  for STEP in "$@"; do "${BUILD_SCRIPTS[$STEP-1]}" "$TAG" || { echo "${BUILD_SCRIPTS[$STEP-1]}: Failed."; exit 1; } done
+    for STEP in "$@"; do
+        if [[ ! "${STEP}" =~ ^[1-9][0-9]*$ ]] ||
+           (( STEP > ${#BUILD_SCRIPTS[@]} )); then
+            echo "ERROR: Invalid build step '${STEP}'."
+            echo "Valid steps are 1-${#BUILD_SCRIPTS[@]}."
+            exit 1
+        fi
+
+        SCRIPT="${BUILD_SCRIPTS[STEP-1]}"
+        "${SCRIPT}"
+    done
 
 else
 
-  ## Run the all build scripts.
-  for SCRIPT in ${BUILD_SCRIPTS[@]}; do "$SCRIPT" "$TAG" || { echo "$SCRIPT: Failed."; exit 1; } done
+    ## Run all build scripts.
+    for SCRIPT in "${BUILD_SCRIPTS[@]}"; do
+        "${SCRIPT}"
+    done
 
 fi
 
-## Store build information
+## Store build information.
 BUILD_FILE="${PSPDEV}/build.txt"
+
 if [[ -f "${BUILD_FILE}" ]]; then
-  sed -i'' '/^pspdev /d' "${BUILD_FILE}"
+    sed -i'' '/^pspdev /d' "${BUILD_FILE}"
 fi
-git log -1 --format="pspdev %H %cs %s" >> "${BUILD_FILE}"
+
+git -C "${ROOT}" log -1 --format="pspdev %H %cs %s" >> "${BUILD_FILE}"
