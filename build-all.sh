@@ -48,6 +48,10 @@ update_tracking_submodules "${ROOT}/components/psp-toolchain"
 update_tracking_submodules \
     "${ROOT}/components/psp-toolchain/components/psp-toolchain-allegrex"
 
+## PSP pacman tracks the current Arch pacman master source shallowly.
+update_tracking_submodules \
+    "${ROOT}/components/psp-toolchain/components/psp-pacman"
+
 ## PSPSDK also contains a StochasticEagle forked component; keep that current.
 update_tracking_submodules "${ROOT}/components/pspsdk"
 
