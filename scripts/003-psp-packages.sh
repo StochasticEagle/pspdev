@@ -4,25 +4,26 @@
 set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="${ROOT}/components/psp-packages"
+PACKAGES_SOURCE="${ROOT}/components/psp-packages"
+PSPSDK_SOURCE="${ROOT}/components/pspsdk"
 
-if [ ! -d "${SOURCE}" ]; then
+if [ ! -x "${PACKAGES_SOURCE}/build.sh" ]; then
     echo "ERROR: psp-packages submodule is not initialized."
-    echo "Run: git submodule update --init --depth=1 components/psp-packages"
+    echo "Run: git submodule update --init --recursive --depth=1 components/psp-packages"
     exit 1
 fi
 
-shopt -s nullglob globstar
-PACKAGES=("${SOURCE}"/**/*.pkg.tar.*)
-shopt -u globstar nullglob
-
-if (( ${#PACKAGES[@]} == 0 )); then
-    echo "ERROR: No locally built PSP packages were found in:"
-    echo "  ${SOURCE}"
-    echo "Stage 3 does not download or build packages."
+if [ ! -x "${PSPSDK_SOURCE}/build-cfw-and-install.sh" ]; then
+    echo "ERROR: PSPSDK CFW build script is not available."
     exit 1
 fi
 
-echo "Installing ${#PACKAGES[@]} locally built PSP packages..."
+## Build and install the PSP package set. Existing package archives are reused,
+## and package dependencies are installed recursively by psp-packages/build.sh.
+cd "${PACKAGES_SOURCE}"
+./build.sh --install
 
-psp-pacman -U --noconfirm "${PACKAGES[@]}" --overwrite '*'
+## CFW additions depend on PSP packages such as zlib and libpng, so they must be
+## built only after the package set has been installed.
+cd "${PSPSDK_SOURCE}"
+./build-cfw-and-install.sh
