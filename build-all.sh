@@ -5,6 +5,10 @@ set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+## Build from the current heads of all configured fork branches.
+git -C "${ROOT}" submodule sync --recursive
+git -C "${ROOT}" submodule update --init --remote --recursive --depth 1
+
 ## PSPDEV is the authoritative installation location.
 if [ -z "${PSPDEV:-}" ]; then
     echo "ERROR: PSPDEV environment variable is not set."
