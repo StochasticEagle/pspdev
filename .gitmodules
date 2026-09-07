@@ -1,17 +1,17 @@
 [submodule "components/pspsdk"]
 	path = components/pspsdk
 	url = https://github.com/StochasticEagle/pspsdk.git
-	branch = master
+	branch = dev/fork
 	shallow = true
 [submodule "components/psp-toolchain"]
 	path = components/psp-toolchain
 	url = https://github.com/StochasticEagle/psp-toolchain.git
-	branch = master
+	branch = dev/fork
 	shallow = true
 [submodule "components/psp-packages"]
 	path = components/psp-packages
 	url = https://github.com/StochasticEagle/psp-packages.git
-	branch = master
+	branch = dev/fork
 	shallow = true
 [submodule "components/psp-linkusb"]
 	path = components/psp-linkusb
