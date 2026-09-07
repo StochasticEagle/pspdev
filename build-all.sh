@@ -5,20 +5,51 @@ set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+## Update branch-tracking submodules shallowly.
+##
+## A shallow submodule clone may only have the ref selected during its initial
+## clone, even when .gitmodules names a different tracking branch.  Do not rely
+## on "git submodule update --remote" finding that remote-tracking ref.  Fetch
+## the configured branch explicitly and update the submodule to that branch tip.
+update_tracking_submodules() {
+    local repo="$1"
+    local key name branch path subrepo
+
+    git -C "${repo}" submodule sync
+    git -C "${repo}" submodule update --init --depth 1
+
+    while read -r key branch; do
+        [[ -n "${key}" && -n "${branch}" ]] || continue
+
+        name="${key#submodule.}"
+        name="${name%.branch}"
+        path="$(git -C "${repo}" config -f .gitmodules --get "submodule.${name}.path")"
+
+        if [[ -z "${path}" ]]; then
+            echo "ERROR: No path configured for submodule '${name}' in ${repo}/.gitmodules"
+            exit 1
+        fi
+
+        subrepo="${repo}/${path}"
+
+        git -C "${subrepo}" fetch --depth 1 origin \
+            "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+        git -C "${subrepo}" checkout --detach "refs/remotes/origin/${branch}"
+    done < <(git -C "${repo}" config -f .gitmodules \
+        --get-regexp '^submodule\..*\.branch$' || true)
+}
+
 ## Refresh the top-level StochasticEagle forks to their configured branch heads.
-git -C "${ROOT}" submodule sync --recursive
-git -C "${ROOT}" submodule update --init --remote --depth 1
+update_tracking_submodules "${ROOT}"
 
 ## The toolchain hierarchy consists of StochasticEagle forks and is intentionally
 ## floating: always build the current configured fork branches recursively.
-git -C "${ROOT}/components/psp-toolchain" submodule sync --recursive
-git -C "${ROOT}/components/psp-toolchain" submodule update \
-    --init --remote --recursive --depth 1
+update_tracking_submodules "${ROOT}/components/psp-toolchain"
+update_tracking_submodules \
+    "${ROOT}/components/psp-toolchain/components/psp-toolchain-allegrex"
 
 ## PSPSDK also contains a StochasticEagle forked component; keep that current.
-git -C "${ROOT}/components/pspsdk" submodule sync --recursive
-git -C "${ROOT}/components/pspsdk" submodule update \
-    --init --remote --recursive --depth 1
+update_tracking_submodules "${ROOT}/components/pspsdk"
 
 ## Package source components are third-party release selections.  Initialize them
 ## at the revisions selected by psp-packages; do not float them to development
