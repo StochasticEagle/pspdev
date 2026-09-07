@@ -42,7 +42,7 @@ These scripts download (`git clone`) and install:
 - [psptoolchain](https://github.com/StochasticEagle/psp-toolchain "psp-toolchain")
 - [pspsdk](https://github.com/StochasticEagle/pspsdk "pspsdk")
 - [psp-packages](https://github.com/StochasticEagle/psp-packages "psp-packages")
-- [psplinkusb](https://github.com/StochasticEagle/psp-linkusb "psp-linkusb")
+- [psplinkusb](https://github.com/StochasticEagle/psp-linkusb "psplinkusb")
 - [ebootsigner](https://github.com/StochasticEagle/psp-ebootsigner "psp-ebootsigner")
 
 ## Requirements
@@ -94,10 +94,10 @@ This repo also uses CI/CD to create a docker image called `pspdev/pspdev:latest`
 
 ## Extra steps
 
-If you want, you can _JUST_ install the extra dependencies as `psplinkusb and ebootsigner`. To achieve this execute
+The extra components are stages 4 and 5 of `build-all.sh`. To build only `psplinkusb` and `ebootsigner`, run:
 
-```**bash**
-./build-extra.sh
+```bash
+./build-all.sh 4 5
 ```
 
 ### macOS
@@ -110,7 +110,7 @@ xattr -dr com.apple.quarantine path/to/prebuilt/pspdev
 
 ### Local package builds
 
-The toolchain (binutils, gcc), the SDK (pspsdk) and the host tools are built locally. However, the provided packages (psp-packages) are installed via `psp-pacman` (or a similar mechanism if not available), which fetches packages from [GitHub releases](https://github.com/StochasticEagle/psp-packages/releases). If you wish to build these packages locally, you might define the variable _LOCAL_PACKAGE_BUILD_ which will force pacman to build the packages from source instead of downloading them:
+The toolchain (binutils, gcc), the SDK (pspsdk) and the host tools are built locally. However, the provided packages (psp-packages) are installed via `psp-pacman` (or a similar mechanism if not available), which fetches packages from [GitHub releases](https://github.com/pspdev/psp-packages/releases). If you wish to build these packages locally, you might define the variable _LOCAL_PACKAGE_BUILD_ which will force pacman to build the packages from source instead of downloading them:
 
 ```bash
 LOCAL_PACKAGE_BUILD=1 ./build-all.sh
