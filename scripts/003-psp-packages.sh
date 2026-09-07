@@ -13,7 +13,7 @@ if [ ! -x "${PACKAGES_SOURCE}/build.sh" ]; then
     exit 1
 fi
 
-if [ ! -x "${PSPSDK_SOURCE}/build-cfw-and-install.sh" ]; then
+if [ ! -f "${PSPSDK_SOURCE}/build-cfw-and-install.sh" ]; then
     echo "ERROR: PSPSDK CFW build script is not available."
     exit 1
 fi
@@ -25,5 +25,4 @@ cd "${PACKAGES_SOURCE}"
 
 ## CFW additions depend on PSP packages such as zlib and libpng, so they must be
 ## built only after the package set has been installed.
-cd "${PSPSDK_SOURCE}"
-./build-cfw-and-install.sh
+bash "${PSPSDK_SOURCE}/build-cfw-and-install.sh"
