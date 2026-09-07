@@ -5,9 +5,27 @@ set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-## Build from the current heads of all configured fork branches.
+## Refresh the top-level StochasticEagle forks to their configured branch heads.
 git -C "${ROOT}" submodule sync --recursive
-git -C "${ROOT}" submodule update --init --remote --recursive --depth 1
+git -C "${ROOT}" submodule update --init --remote --depth 1
+
+## The toolchain hierarchy consists of StochasticEagle forks and is intentionally
+## floating: always build the current configured fork branches recursively.
+git -C "${ROOT}/components/psp-toolchain" submodule sync --recursive
+git -C "${ROOT}/components/psp-toolchain" submodule update \
+    --init --remote --recursive --depth 1
+
+## PSPSDK also contains a StochasticEagle forked component; keep that current.
+git -C "${ROOT}/components/pspsdk" submodule sync --recursive
+git -C "${ROOT}/components/pspsdk" submodule update \
+    --init --remote --recursive --depth 1
+
+## Package source components are third-party release selections.  Initialize them
+## at the revisions selected by psp-packages; do not float them to development
+## branch heads with --remote.
+git -C "${ROOT}/components/psp-packages" submodule sync --recursive
+git -C "${ROOT}/components/psp-packages" submodule update \
+    --init --recursive --depth 1
 
 ## PSPDEV is the authoritative installation location.
 if [ -z "${PSPDEV:-}" ]; then
