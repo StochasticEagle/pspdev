@@ -58,11 +58,15 @@ echo "Synchronizing submodule URLs..."
 git submodule sync --recursive
 
 echo "Initializing/updating recorded submodule revisions..."
-git submodule update \
+git -c remote.origin.tagOpt=--no-tags submodule update \
     --init \
     --recursive \
     --depth 1 \
     --jobs "${JOBS}"
+
+# Keep all initialized nested components from auto-following remote tags.
+git submodule foreach --quiet --recursive \
+    'git config remote.origin.tagOpt --no-tags'
 
 echo "Verifying submodule state..."
 bad=0
