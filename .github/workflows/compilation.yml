@@ -109,13 +109,15 @@ jobs:
     - name: Install git on Fedora
       if: ${{ matrix.container[0] == 'fedora' }}
       run: |
-        dnf -y install git
+        dnf -y install git sudo
+        useradd -m build
 
     - name: Install git on Debian
       if: ${{ matrix.container[0] == 'debian' }}
       run: |
         apt-get update
-        apt-get install -y git
+        apt-get install -y git sudo
+        useradd -m build
 
     - uses: actions/checkout@v4
 
@@ -125,10 +127,10 @@ jobs:
 
     - name: Runs full build in shell
       run: |
-        chown -R $(id -nu):$(id -ng) .
         export PSPDEV=$PWD/pspdev
         export PATH=$PATH:$PSPDEV/bin
-        ./build-all.sh
+        chown -R build:build .
+        sudo -u build env PSPDEV="$PSPDEV" PATH="$PATH" ./build-all.sh
 
     - name: Prepare pspdev folder
       run: |

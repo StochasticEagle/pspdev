@@ -1,26 +1,34 @@
 #!/bin/sh
-# check-pspdev.sh by Naomi Peori (naomi@peori.ca)
+# Check whether PSPDEV can be installed by this process or via sudo.
 
-## Check if $PSPDEV is set.
 if [ -z "${PSPDEV:-}" ]; then
     echo "ERROR: Set \$PSPDEV before continuing."
     exit 1
 fi
 
-## Check for the $PSPDEV directory.
-ls -ld "${PSPDEV}" >/dev/null 2>&1 ||
-mkdir -p "${PSPDEV}" >/dev/null 2>&1 ||
-{
-    echo "ERROR: Create ${PSPDEV} before continuing."
+if [ -e "${PSPDEV}" ] && [ ! -d "${PSPDEV}" ]; then
+    echo "ERROR: ${PSPDEV} exists but is not a directory."
     exit 1
-}
+fi
 
-## Check for write permission.
-touch "${PSPDEV}/.pspdev-write-test" >/dev/null 2>&1 ||
-{
-    echo "ERROR: Grant write permissions for ${PSPDEV} before continuing."
-    exit 1
-}
+if [ -d "${PSPDEV}" ] && [ -w "${PSPDEV}" ] && [ -x "${PSPDEV}" ]; then
+    exit 0
+fi
 
-rm -f "${PSPDEV}/.pspdev-write-test"
+parent="${PSPDEV}"
+while [ ! -e "${parent}" ]; do
+    next="$(dirname "${parent}")"
+    [ "${next}" != "${parent}" ] || break
+    parent="${next}"
+done
 
+if [ -d "${parent}" ] && [ -w "${parent}" ] && [ -x "${parent}" ]; then
+    exit 0
+fi
+
+if command -v sudo >/dev/null 2>&1; then
+    exit 0
+fi
+
+echo "ERROR: ${PSPDEV} is not writable by the current process and sudo is unavailable."
+exit 1

@@ -4,6 +4,8 @@
 set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${ROOT}/install-permissions.sh"
+pspdev_require_unprivileged_build
 
 ## Update branch-tracking submodules shallowly.
 ##
@@ -112,10 +114,4 @@ else
 fi
 
 ## Store build information.
-BUILD_FILE="${PSPDEV}/build.txt"
-
-if [[ -f "${BUILD_FILE}" ]]; then
-    sed -i'' '/^pspdev /d' "${BUILD_FILE}"
-fi
-
-git -C "${ROOT}" log -1 --format="pspdev %H %cs %s" >> "${BUILD_FILE}"
+pspdev_record_build_info "pspdev" "$(git -C "${ROOT}" log -1 --format="pspdev %H %cs %s")"

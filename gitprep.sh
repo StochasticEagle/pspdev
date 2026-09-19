@@ -10,6 +10,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 JOBS="${GITPREP_JOBS:-8}"
 
+if (( EUID == 0 )); then
+    echo "ERROR: Do not run gitprep.sh as root." >&2
+    exit 1
+fi
+
 cd "${ROOT}"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

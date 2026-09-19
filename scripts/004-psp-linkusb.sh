@@ -5,6 +5,8 @@ set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${ROOT}/components/psp-linkusb"
+source "${ROOT}/install-permissions.sh"
+pspdev_require_unprivileged_build
 
 if [ ! -f "${SOURCE}/Makefile" ]; then
 	echo "ERROR: psp-linkusb submodule is not initialized."
@@ -23,14 +25,14 @@ make --quiet -j "$PROC_NR" all
 
 # Windows currently can't compile pspsh, usbhostfs_pc
 if [ "${OSVER:0:5}" != "MINGW" ]; then
-	make --quiet -j "$PROC_NR" -C pspsh install
-	make --quiet -j "$PROC_NR" -C usbhostfs_pc install
+    make --quiet -j "$PROC_NR" -C pspsh all
+    make --quiet -j "$PROC_NR" -C usbhostfs_pc all
+
+    pspdev_run_install mkdir -p "${PSPDEV}/bin" "${PSPDEV}/share/psplinkusb"
+    pspdev_run_install install -m 755 pspsh/pspsh "${PSPDEV}/bin/pspsh"
+    pspdev_run_install install -m 755 usbhostfs_pc/usbhostfs_pc "${PSPDEV}/bin/usbhostfs_pc"
+    pspdev_run_install install -m 644 usbhostfs_pc/50-psplink.rules "${PSPDEV}/share/psplinkusb/50-psplink.rules"
 fi
 
 ## Store build information
-BUILD_FILE="${PSPDEV}/build.txt"
-if [[ -f "${BUILD_FILE}" ]]; then
-	sed -i'' '/^psp-linkusb /d' "${BUILD_FILE}"
-fi
-
-git -C "${SOURCE}" log -1 --format="psp-linkusb %H %cs %s" >> "${BUILD_FILE}"
+pspdev_record_build_info "psp-linkusb" "$(git -C "${SOURCE}" log -1 --format="psp-linkusb %H %cs %s")"

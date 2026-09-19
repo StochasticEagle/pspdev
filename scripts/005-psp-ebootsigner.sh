@@ -5,6 +5,8 @@ set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${ROOT}/components/psp-ebootsigner"
+source "${ROOT}/install-permissions.sh"
+pspdev_require_unprivileged_build
 
 if [ ! -f "${SOURCE}/Makefile" ]; then
 	echo "ERROR: psp-ebootsigner submodule is not initialized."
@@ -19,12 +21,8 @@ cd "${SOURCE}"
 
 ## Compile and install.
 make --quiet -j "$PROC_NR" all
-make --quiet -j "$PROC_NR" install
+pspdev_run_install mkdir -p "${PSPDEV}/bin"
+pspdev_run_install install -m 755 ebootsign "${PSPDEV}/bin/ebootsign"
 
 ## Store build information
-BUILD_FILE="${PSPDEV}/build.txt"
-if [[ -f "${BUILD_FILE}" ]]; then
-sed -i'' '/^psp-ebootsigner /d' "${BUILD_FILE}"
-fi
-
-git -C "${SOURCE}" log -1 --format="psp-ebootsigner %H %cs %s" >> "${BUILD_FILE}"
+pspdev_record_build_info "psp-ebootsigner" "$(git -C "${SOURCE}" log -1 --format="psp-ebootsigner %H %cs %s")"
