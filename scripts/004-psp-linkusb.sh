@@ -6,7 +6,6 @@ set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${ROOT}/components/psp-linkusb"
 source "${ROOT}/install-permissions.sh"
-pspdev_require_unprivileged_build
 
 if [ ! -f "${SOURCE}/Makefile" ]; then
 	echo "ERROR: psp-linkusb submodule is not initialized."

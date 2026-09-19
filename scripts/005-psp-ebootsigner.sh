@@ -6,7 +6,6 @@ set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${ROOT}/components/psp-ebootsigner"
 source "${ROOT}/install-permissions.sh"
-pspdev_require_unprivileged_build
 
 if [ ! -f "${SOURCE}/Makefile" ]; then
 	echo "ERROR: psp-ebootsigner submodule is not initialized."

@@ -1,16 +1,8 @@
 #!/usr/bin/env bash
 # Shared PSPDEV install-permission helpers.
 #
-# Build steps must run as the invoking user. Only installation commands are
-# elevated, and only when the current process cannot write the PSPDEV prefix.
-
-pspdev_require_unprivileged_build() {
-    if (( EUID == 0 )); then
-        echo "ERROR: Build steps must not run as root." >&2
-        echo "Run the build as your normal user; installation will elevate only if required." >&2
-        return 1
-    fi
-}
+# Build commands run with the current process permissions. Installation
+# commands elevate only when the current process cannot write the PSPDEV prefix.
 
 pspdev_prefix_is_writable() {
     local target="${PSPDEV:-}"
