@@ -53,7 +53,8 @@ ubuntu | linuxmint | debian | pop)
         libarchive-dev libgpgme-dev \
         libncurses-dev libgsl-dev \
         zlib1g-dev wget \
-        meson ninja-build
+        meson ninja-build \
+        python3 python3-jinja2 python3-jsonschema
     ;;
 
 rhel | fedora)
@@ -70,7 +71,8 @@ rhel | fedora)
         libcurl-devel libarchive-devel \
         openssl-devel gpgme-devel \
         diffutils gawk xz \
-        meson ninja-build
+        meson ninja-build \
+        python3 python3-jinja2 python3-jsonschema
     ;;
 
 gentoo)
@@ -95,7 +97,8 @@ arch | manjaro | endeavouros | cachyos)
         gsl gmp mpfr libmpc \
         libusb readline libarchive gpgme \
         bash openssl libtool boost \
-        pkgconf meson ninja
+        pkgconf meson ninja \
+        python3 python3-jinja2 python3-jsonschema
     ;;
 
 opensuse*)
@@ -112,7 +115,8 @@ opensuse*)
         openssl libopenssl-devel \
         ncurses ncurses-devel \
         gmp-devel mpfr-devel mpc-devel \
-        meson ninja
+        meson ninja \
+        python3 python3-Jinja2 python3-jsonschema
     ;;
 
 *)
