@@ -6,9 +6,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Cleaning PSPDEV build artifacts..."
 
+clean_build_dir() {
+    local dir="$1"
+    if [[ -d "${dir}" ]]; then
+        find "${dir}" -mindepth 1 -delete
+        rmdir "${dir}" 2>/dev/null || true
+    fi
+}
+
 TOOLCHAIN="${ROOT}/components/psp-toolchain"
-if [[ -x "${TOOLCHAIN}/clean.sh" ]]; then
-    "${TOOLCHAIN}/clean.sh"
+ALLEGREX="${TOOLCHAIN}/components/psp-toolchain-allegrex"
+clean_build_dir "${TOOLCHAIN}/build"
+clean_build_dir "${ALLEGREX}/build"
+
+PTHREAD="${ALLEGREX}/components/pthread/platform/psp"
+if [[ -f "${PTHREAD}/Makefile" ]]; then
+    make -C "${PTHREAD}" clean
+fi
+
+PACMAN="${TOOLCHAIN}/components/psp-pacman"
+if [[ -x "${PACMAN}/clean.sh" ]]; then
+    "${PACMAN}/clean.sh"
 fi
 
 PSPSDK="${ROOT}/components/pspsdk"
