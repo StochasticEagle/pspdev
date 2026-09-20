@@ -12,27 +12,40 @@ if [ ! -f "${PSPSDK_SOURCE}/build-cfw-and-install.sh" ]; then
     exit 1
 fi
 
-if [ -n "${LOCAL_PACKAGE_BUILD:-}" ] && [ "${LOCAL_PACKAGE_BUILD}" != "0" ]; then
+build_local_packages() {
     if [ ! -x "${PACKAGES_SOURCE}/build.sh" ]; then
         echo "ERROR: psp-packages submodule is not initialized."
         echo "Run: git submodule update --init --recursive --depth=1 components/psp-packages"
         exit 1
     fi
 
+    echo "Building and installing PSP packages locally."
+    (
+        cd "${PACKAGES_SOURCE}"
+        ./build.sh --install
+    )
+}
+
+if [ -n "${LOCAL_PACKAGE_BUILD:-}" ] && [ "${LOCAL_PACKAGE_BUILD}" != "0" ]; then
     # Explicit local mode builds and installs the package set from the checked
     # out recipes and source-component revisions.
-    cd "${PACKAGES_SOURCE}"
-    ./build.sh --install
+    build_local_packages
 else
     if ! command -v psp-pacman >/dev/null 2>&1; then
         echo "ERROR: psp-pacman is not installed in PATH."
         exit 1
     fi
 
-    # Normal PSPDEV installs consume the package repository published by
-    # StochasticEagle/psp-packages through GitHub Pages.
-    psp-pacman -Sy --noconfirm
-    psp-pacman -S --needed --noconfirm psp-libraries
+    # Prefer the published package repository when it is available. Until the
+    # repository is populated, or if it is temporarily unavailable, fall back
+    # to the checked-out package recipes instead of aborting the PSPDEV build.
+    if psp-pacman -Sy --noconfirm &&
+       psp-pacman -S --needed --noconfirm psp-libraries; then
+        :
+    else
+        echo "WARNING: PSP package repository is unavailable; using local package builds."
+        build_local_packages
+    fi
 fi
 
 # CFW libraries and source-built PRX modules depend on PSP packages such as
