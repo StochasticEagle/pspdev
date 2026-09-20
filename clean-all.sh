@@ -45,8 +45,6 @@ if [[ -f "${PSPLINK}/Makefile" ]]; then
 fi
 
 EBOOTSIGNER="${ROOT}/components/psp-ebootsigner"
-if [[ -f "${EBOOTSIGNER}/Makefile" ]]; then
-    make -C "${EBOOTSIGNER}" clean
-fi
+clean_build_dir "${EBOOTSIGNER}/build"
 
 echo "Build artifacts cleaned. The PSPDEV install prefix was not modified."
