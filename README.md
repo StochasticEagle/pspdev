@@ -82,6 +82,14 @@ sudo ./prepare.sh
     ./build-all.sh
     ```
 
+Normal builds are incremental and preserve existing build trees. To force a fresh
+package/SDK/host-tool build without deleting the installed PSPDEV prefix, run:
+
+```bash
+./clean-all.sh
+./build-all.sh
+```
+
 > [!TIP]
 > If you are upgrading from the previous version of the PSPDEV environment, it is highly recommended removing the content of the PSPDEV folder before upgrade. This is a     necessary step after the major toolchain upgrade.
 > ```bash
