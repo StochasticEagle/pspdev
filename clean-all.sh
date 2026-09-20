@@ -6,9 +6,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Cleaning PSPDEV build artifacts..."
 
-PACMAN="${ROOT}/components/psp-toolchain/components/psp-pacman"
-if [[ -x "${PACMAN}/clean.sh" ]]; then
-    "${PACMAN}/clean.sh"
+TOOLCHAIN="${ROOT}/components/psp-toolchain"
+if [[ -x "${TOOLCHAIN}/clean.sh" ]]; then
+    "${TOOLCHAIN}/clean.sh"
 fi
 
 PSPSDK="${ROOT}/components/pspsdk"
