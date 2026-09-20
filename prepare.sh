@@ -87,7 +87,10 @@ gentoo)
         dev-libs/mpc \
         dev-libs/libusb \
         dev-build/ninja \
-        dev-build/meson
+        dev-build/meson \
+        dev-lang/python \
+        dev-python/jinja2 \
+        dev-python/jsonschema
     ;;
 
 arch | manjaro | endeavouros | cachyos)
@@ -98,7 +101,7 @@ arch | manjaro | endeavouros | cachyos)
         libusb readline libarchive gpgme \
         bash openssl libtool boost \
         pkgconf meson ninja \
-        python3 python3-jinja2 python3-jsonschema
+        python python-jinja python-jsonschema
     ;;
 
 opensuse*)
