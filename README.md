@@ -2,7 +2,7 @@
 
 # PSPDEV
 
-[![CI](https://img.shields.io/github/actions/workflow/status/pspdev/pspdev/.github/workflows/compilation.yml?branch=master&style=for-the-badge&logo=github&label=CI)](https://github.com/pspdev/pspdev/actions?query=workflow:CI) [![CI-Docker](https://img.shields.io/github/actions/workflow/status/pspdev/pspdev/.github/workflows/docker.yml?branch=master&style=for-the-badge&logo=github&label=CI-Docker)](https://github.com/pspdev/pspdev/actions?query=workflow:CI-Docker) [![Docker Pulls](https://img.shields.io/docker/pulls/pspdev/pspdev?style=for-the-badge)](https://hub.docker.com/r/pspdev/pspdev/tags)
+[![CI](https://img.shields.io/github/actions/workflow/status/StochasticEagle/pspdev/.github/workflows/compilation.yml?branch=dev%2Ffork&style=for-the-badge&logo=github&label=CI)](https://github.com/StochasticEagle/pspdev/actions/workflows/compilation.yml)
 
 Main PSP Repo for building the whole `PSP Development` environment in your local machine.
 
@@ -18,7 +18,6 @@ This program will automatically build and install the whole compiler and other t
   - [What these scripts do](#what-these-scripts-do)
   - [Requirements](#requirements)
   - [Installation from source](#installation-from-source)
-  - [Docker generation](#docker-generation)
   - [Extra steps](#extra-steps)
     - [macOS](#macos)
     - [Local package builds](#local-package-builds)
@@ -26,7 +25,7 @@ This program will automatically build and install the whole compiler and other t
 
 ## Up and running
 
-You can get started very quickly by grabbing the latest development pre-releases from the [releases' page for your platform](https://github.com/pspdev/pspdev/releases) and extract them to the `pspdev` directory in your `path`.
+You can get started very quickly by grabbing the latest development pre-releases from the [releases' page for your platform](https://github.com/StochasticEagle/pspdev/releases) and extract them to the `pspdev` directory in your `path`.
 
 Export the `PSPDEV` environment variable to point to the `pspdev` directory. For example:
 
@@ -39,11 +38,11 @@ export PATH=$PATH:$PSPDEV/bin
 
 These scripts download (`git clone`) and install:
 
-- [psptoolchain](https://github.com/pspdev/psptoolchain "psptoolchain")
-- [pspsdk](https://github.com/pspdev/pspsdk "pspsdk")
-- [psp-packages](https://github.com/pspdev/psp-packages "psp-packages")
-- [psplinkusb](https://github.com/pspdev/psplinkusb "psplinkusb")
-- [ebootsigner](https://github.com/pspdev/ebootsigner "ebootsigner")
+- [psptoolchain](https://github.com/StochasticEagle/psp-toolchain "psptoolchain")
+- [pspsdk](https://github.com/StochasticEagle/pspsdk "pspsdk")
+- [psp-packages](https://github.com/StochasticEagle/psp-packages "psp-packages")
+- [psplinkusb](https://github.com/StochasticEagle/psp-linkusb "psplinkusb")
+- [ebootsigner](https://github.com/StochasticEagle/psp-ebootsigner "ebootsigner")
 
 ## Requirements
 
@@ -88,10 +87,6 @@ sudo ./prepare.sh
 > sudo rm -rf $PSPDEV
 > ```
 
-## Docker generation
-
-This repo also uses CI/CD to create a docker image called `pspdev/pspdev:latest` per change. This is useful if you're a developer that wants to create/port an application to the PSP. You can compile your project using this docker image.
-
 ## Extra steps
 
 If you want, you can _JUST_ install the extra dependencies as `psplinkusb and ebootsigner`. To achieve this execute
@@ -110,7 +105,7 @@ xattr -dr com.apple.quarantine path/to/prebuilt/pspdev
 
 ### Local package builds
 
-The toolchain (binutils, gcc), the SDK (pspsdk) and the host tools are built locally. However, the provided packages (psp-packages) are installed via `psp-pacman` (or a similar mechanism if not available), which fetches packages from [GitHub releases](https://github.com/pspdev/psp-packages/releases). If you wish to build these packages locally, you might define the variable _LOCAL_PACKAGE_BUILD_ which will force pacman to build the packages from source instead of downloading them:
+The toolchain (binutils, gcc), the SDK (pspsdk) and the host tools are built locally. Published packages are served from this fork's [psp-packages repository](https://stochasticeagle.github.io/psp-packages/). If you wish to build these packages locally, define _LOCAL_PACKAGE_BUILD_ to force packages to build from source instead of downloading them:
 
 ```bash
 LOCAL_PACKAGE_BUILD=1 ./build-all.sh
