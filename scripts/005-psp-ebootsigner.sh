@@ -17,6 +17,9 @@ fi
 
 PROC_NR=$(getconf _NPROCESSORS_ONLN)
 
+## CMake cache/tool detection must not survive source or host toolchain changes.
+rm -rf "${BUILD}"
+
 cmake -S "${SOURCE}" -B "${BUILD}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \

@@ -19,7 +19,9 @@ OSVER=$(uname)
 
 cd "${SOURCE}"
 
-## Compile and install.
+## Objects are built in-tree. Clean first so compiler/SDK/source changes
+## cannot reuse stale host or PSP objects.
+make --quiet clean
 make --quiet -j "$PROC_NR" all
 
 # Windows currently can't compile pspsh, usbhostfs_pc
