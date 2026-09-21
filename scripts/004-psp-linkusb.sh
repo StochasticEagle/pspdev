@@ -19,9 +19,8 @@ OSVER=$(uname)
 
 cd "${SOURCE}"
 
-## Objects are built in-tree. Clean first so compiler/SDK/source changes
-## cannot reuse stale host or PSP objects.
-make --quiet clean
+## Build in place. Make's dependency graph recompiles only objects whose
+## sources or toolchain-visible inputs changed.
 make --quiet -j "$PROC_NR" all
 
 # Windows currently can't compile pspsh, usbhostfs_pc
