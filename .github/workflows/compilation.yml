@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  checks: write
 
 concurrency:
   group: pspdev-${{ github.workflow }}-${{ github.ref }}
@@ -137,3 +138,63 @@ jobs:
         with:
           files: pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}.tar.gz
           tag_name: ${{ github.ref_name }}
+
+  legacy-prx-status:
+    if: always()
+    needs:
+      - build
+      - build-containers
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check legacy PRX inventory
+        id: legacy-prx
+        run: |
+          git submodule update --init --depth 1 components/pspsdk
+          missing=()
+          for prx in intraFont-vlf.prx lflash_fdisk.prx libpsardumper.prx pspdecrypt.prx vlf.prx; do
+            if [[ ! -f "components/pspsdk/src/pre-built/$prx" ]]; then
+              missing+=("$prx")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf '%s\n' "${missing[@]}" > legacy-prx-status.txt
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+            {
+              echo 'names<<EOF'
+              printf '%s\n' "${missing[@]}"
+              echo EOF
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report neutral legacy PRX status
+        if: steps.legacy-prx.outputs.missing == 'true'
+        uses: actions/github-script@v8
+        env:
+          MISSING_LEGACY_PRXS: ${{ steps.legacy-prx.outputs.names }}
+        with:
+          script: |
+            const missing = process.env.MISSING_LEGACY_PRXS.trim().split(/\r?\n/).filter(Boolean);
+            core.warning(`Legacy pre-built PRXs unavailable: ${missing.join(', ')}`);
+            try {
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'Legacy PRX status',
+                head_sha: context.sha,
+                status: 'completed',
+                conclusion: 'neutral',
+                output: {
+                  title: 'Legacy PRX set is incomplete',
+                  summary: `Temporary soft-fail: missing ${missing.join(', ')}. Source-built modules remain strict.`
+                }
+              });
+            } catch (error) {
+              core.warning(`Unable to publish neutral Legacy PRX check: ${error.message}`);
+            }
+
