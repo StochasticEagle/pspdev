@@ -69,6 +69,59 @@ if [ -z "${PSPDEV:-}" ]; then
     exit 1
 fi
 
+clear_pspdev_contents() {
+    local dir
+
+    if [[ -z "${PSPDEV:-}" || "${PSPDEV}" == "/" ]]; then
+        echo "ERROR: Refusing to clear unsafe PSPDEV prefix: ${PSPDEV:-<unset>}" >&2
+        return 1
+    fi
+
+    if [[ ! -d "${PSPDEV}" ]]; then
+        return 0
+    fi
+
+    while IFS= read -r -d '' dir; do
+        if [[ ! -w "${dir}" || ! -x "${dir}" ]]; then
+            echo "ERROR: Cannot clear ${PSPDEV} without elevated privileges." >&2
+            echo "Directory is not writable by the current user: ${dir}" >&2
+            return 1
+        fi
+    done < <(find "${PSPDEV}" -type d -print0)
+
+    find "${PSPDEV}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
+## A full PSPDEV build starts from an empty installation prefix. The prefix
+## directory itself is preserved so its ownership and permissions are unchanged.
+## Targeted step builds remain incremental and do not clear the prefix.
+if (( $# == 0 )) && [[ -e "${PSPDEV}" ]]; then
+    if [[ ! -d "${PSPDEV}" ]]; then
+        echo "ERROR: ${PSPDEV} exists but is not a directory." >&2
+        exit 1
+    fi
+    if [[ "${PSPDEV}" == "/" ]]; then
+        echo "ERROR: Refusing to clear PSPDEV=/." >&2
+        exit 1
+    fi
+    if [[ ! -t 0 ]]; then
+        echo "ERROR: Full build requires interactive confirmation before clearing:" >&2
+        echo "  ${PSPDEV}" >&2
+        exit 1
+    fi
+
+    printf 'Full build will permanently remove all contents of the existing PSPDEV installation:\n  %s\n' "${PSPDEV}"
+    printf 'The PSPDEV directory itself will be preserved.\n'
+    printf 'Type the full path exactly to confirm removal of its contents: '
+    IFS= read -r confirmation
+    if [[ "${confirmation}" != "${PSPDEV}" ]]; then
+        echo "PSPDEV reset cancelled." >&2
+        exit 1
+    fi
+
+    clear_pspdev_contents
+fi
+
 ## Ensure tools installed earlier in the build are used by later stages.
 export PATH="${PSPDEV}/bin:${PATH}"
 
