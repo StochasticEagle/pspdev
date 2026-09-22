@@ -69,6 +69,14 @@ if [ -z "${PSPDEV:-}" ]; then
     exit 1
 fi
 
+PROGRESS_MODE=""
+if [[ "${1:-}" == "p" ]]; then
+    PROGRESS_MODE="true"
+    shift
+fi
+FULL_BUILD=0
+(( $# == 0 )) && FULL_BUILD=1
+
 clear_pspdev_contents() {
     local dir
 
@@ -95,7 +103,7 @@ clear_pspdev_contents() {
 ## A full PSPDEV build starts from an empty installation prefix. The prefix
 ## directory itself is preserved so its ownership and permissions are unchanged.
 ## Targeted step builds remain incremental and do not clear the prefix.
-if (( $# == 0 )) && [[ -e "${PSPDEV}" ]]; then
+if (( FULL_BUILD )) && [[ -e "${PSPDEV}" ]]; then
     if [[ ! -d "${PSPDEV}" ]]; then
         echo "ERROR: ${PSPDEV} exists but is not a directory." >&2
         exit 1
@@ -134,6 +142,109 @@ DEPEND_SCRIPTS=("${ROOT}"/depends/*.sh)
 BUILD_SCRIPTS=("${ROOT}"/scripts/*.sh)
 shopt -u nullglob
 
+stage_label() {
+    case "$1" in
+        1) printf '%s\n' "PSP toolchain" ;;
+        2) printf '%s\n' "PSPSDK" ;;
+        3) printf '%s\n' "PSP packages" ;;
+        4) printf '%s\n' "psp-linkusb" ;;
+        5) printf '%s\n' "psp-ebootsigner" ;;
+        *) printf '%s\n' "Step $1" ;;
+    esac
+}
+
+render_stage_progress() {
+    local step="$1"
+    local total="$2"
+    local label="$3"
+    local last="$4"
+    local width=30
+    local filled=$(( step * width / total ))
+    local empty=$(( width - filled ))
+    local done_bar
+    local left_bar
+
+    printf -v done_bar '%*s' "${filled}" ''
+    printf -v left_bar '%*s' "${empty}" ''
+    done_bar="${done_bar// /#}"
+    left_bar="${left_bar// /-}"
+    printf '\033[2A\r\033[2K[%s%s] %d/%d %s\n\r\033[2K%s\n' "${done_bar}" "${left_bar}" "${step}" "${total}" "${label}" "${last}"
+}
+
+persist_progress_log() {
+    local source="$1"
+    local destination="$2"
+
+    pspdev_run_install mkdir -p "${PSPDEV}/build/logs"
+    pspdev_run_install cp "${source}" "${destination}"
+}
+
+run_progress_step() {
+    local step="$1"
+    local script="$2"
+    local total="${#BUILD_SCRIPTS[@]}"
+    local label
+    local stamp
+    local temp_log
+    local final_log
+    local line
+    local current
+    local package_total
+    local package
+    local state
+    local status
+    local last
+
+    label="$(stage_label "${step}")"
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    temp_log="$(mktemp)"
+    final_log="${PSPDEV}/build/logs/step-${step}-${stamp}.log"
+    printf 'START step=%s label=%s\n' "${step}" "${label}" > "${temp_log}"
+
+    printf '\n\n'
+    render_stage_progress "${step}" "${total}" "${label}" "Starting ${label}"
+
+    set +e
+    if (( step == 3 )); then
+        PSPDEV_PROGRESS=1 "${script}" 2>&1 |
+            while IFS= read -r line; do
+                if [[ "${line}" == PSP_PROGRESS* || "${line}" == ERROR:* || "${line}" == WARNING:* ]]; then
+                    printf '%s\n' "${line}" >> "${temp_log}"
+                fi
+                if [[ "${line}" == PSP_PROGRESS* ]]; then
+                    IFS="$(printf '\t')" read -r _ current package_total package state <<< "${line}"
+                    render_stage_progress "${step}" "${total}" "${label}" "Packages ${current}/${package_total}: ${state} ${package}"
+                elif [[ "${line}" == ERROR:* || "${line}" == WARNING:* ]]; then
+                    render_stage_progress "${step}" "${total}" "${label}" "${line}"
+                fi
+            done
+    else
+        "${script}" 2>&1 |
+            while IFS= read -r line; do
+                printf '%s\n' "${line}" >> "${temp_log}"
+                if [[ "${line}" =~ ^(Building|Installing|Cleaning|Configuring|Reusing|ERROR:|WARNING:|==\>[[:space:]](Making|Starting|Finished|Creating|Installing)) ]]; then
+                    render_stage_progress "${step}" "${total}" "${label}" "${line}"
+                fi
+            done
+    fi
+    status=${PIPESTATUS[0]}
+    set -e
+
+    if (( status == 0 )); then
+        printf 'DONE step=%s label=%s\n' "${step}" "${label}" >> "${temp_log}"
+        render_stage_progress "${step}" "${total}" "${label}" "Completed ${label}"
+    else
+        printf 'FAILED step=%s label=%s status=%s\n' "${step}" "${label}" "${status}" >> "${temp_log}"
+        last="$(tail -n 1 "${temp_log}")"
+        render_stage_progress "${step}" "${total}" "${label}" "${last}"
+    fi
+
+    persist_progress_log "${temp_log}" "${final_log}"
+    rm -f "${temp_log}"
+    printf 'Log: %s\n' "${final_log}"
+    return "${status}"
+}
+
 ## Run dependency checks.
 for SCRIPT in "${DEPEND_SCRIPTS[@]}"; do
     "${SCRIPT}"
@@ -156,14 +267,24 @@ if (( $# > 0 )); then
         fi
 
         SCRIPT="${BUILD_SCRIPTS[STEP-1]}"
-        "${SCRIPT}"
+        if [[ -n "${PROGRESS_MODE}" && -t 1 && -z "${CI:-}" ]]; then
+            run_progress_step "${STEP}" "${SCRIPT}"
+        else
+            "${SCRIPT}"
+        fi
     done
 
 else
 
     ## Run all build scripts.
+    STEP=0
     for SCRIPT in "${BUILD_SCRIPTS[@]}"; do
-        "${SCRIPT}"
+        STEP=$(( STEP + 1 ))
+        if [[ -n "${PROGRESS_MODE}" && -t 1 && -z "${CI:-}" ]]; then
+            run_progress_step "${STEP}" "${SCRIPT}"
+        else
+            "${SCRIPT}"
+        fi
     done
 
 fi

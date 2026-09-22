@@ -22,7 +22,11 @@ build_local_packages() {
     echo "Building and installing PSP packages locally."
     (
         cd "${PACKAGES_SOURCE}"
-        ./build.sh --install
+        if [[ "${PSPDEV_PROGRESS:-0}" == "1" ]]; then
+            PSP_PROGRESS_PARENT=1 ./build.sh p --install
+        else
+            ./build.sh --install
+        fi
     )
 }
 
