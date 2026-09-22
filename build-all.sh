@@ -104,22 +104,25 @@ if (( $# == 0 )) && [[ -e "${PSPDEV}" ]]; then
         echo "ERROR: Refusing to clear PSPDEV=/." >&2
         exit 1
     fi
-    if [[ ! -t 0 ]]; then
-        echo "ERROR: Full build requires interactive confirmation before clearing:" >&2
-        echo "  ${PSPDEV}" >&2
-        exit 1
-    fi
 
-    printf 'Full build will permanently remove all contents of the existing PSPDEV installation:\n  %s\n' "${PSPDEV}"
-    printf 'The PSPDEV directory itself will be preserved.\n'
-    printf 'Type the full path exactly to confirm removal of its contents: '
-    IFS= read -r confirmation
-    if [[ "${confirmation}" != "${PSPDEV}" ]]; then
-        echo "PSPDEV reset cancelled." >&2
-        exit 1
-    fi
+    if find "${PSPDEV}" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+        if [[ ! -t 0 ]]; then
+            echo "ERROR: Full build requires interactive confirmation before clearing:" >&2
+            echo "  ${PSPDEV}" >&2
+            exit 1
+        fi
 
-    clear_pspdev_contents
+        printf 'Full build will permanently remove all contents of the existing PSPDEV installation:\n  %s\n' "${PSPDEV}"
+        printf 'The PSPDEV directory itself will be preserved.\n'
+        printf 'Type the full path exactly to confirm removal of its contents: '
+        IFS= read -r confirmation
+        if [[ "${confirmation}" != "${PSPDEV}" ]]; then
+            echo "PSPDEV reset cancelled." >&2
+            exit 1
+        fi
+
+        clear_pspdev_contents
+    fi
 fi
 
 ## Ensure tools installed earlier in the build are used by later stages.
