@@ -14,10 +14,13 @@ source "${ROOT}/install-permissions.sh"
 ## the configured branch explicitly and update the submodule to that branch tip.
 update_tracking_submodules() {
     local repo="$1"
-    local key name branch path subrepo
+    local key name branch path subrepo display
 
-    git -C "${repo}" submodule sync
-    git -C "${repo}" submodule update --init --depth 1
+    display="${repo#"${ROOT}/"}"
+    [[ "${repo}" == "${ROOT}" ]] && display="top-level submodules"
+
+    run_preparation_command "Synchronizing ${display}" git -C "${repo}" submodule sync
+    run_preparation_command "Initializing ${display}" git -C "${repo}" submodule update --init --depth 1
 
     while read -r key branch; do
         [[ -n "${key}" && -n "${branch}" ]] || continue
@@ -32,36 +35,14 @@ update_tracking_submodules() {
         fi
 
         subrepo="${repo}/${path}"
+        display="${subrepo#"${ROOT}/"}"
 
-        git -C "${subrepo}" fetch --depth 1 origin \
+        run_preparation_command "Fetching ${display}" git -C "${subrepo}" fetch --depth 1 origin \
             "+refs/heads/${branch}:refs/remotes/origin/${branch}"
-        git -C "${subrepo}" checkout --detach "refs/remotes/origin/${branch}"
+        run_preparation_command "Updating ${display}" git -C "${subrepo}" checkout --detach "refs/remotes/origin/${branch}"
     done < <(git -C "${repo}" config -f .gitmodules \
         --get-regexp '^submodule\..*\.branch$' || true)
 }
-
-## Refresh the top-level StochasticEagle forks to their configured branch heads.
-update_tracking_submodules "${ROOT}"
-
-## The toolchain hierarchy consists of StochasticEagle forks and is intentionally
-## floating: always build the current configured fork branches recursively.
-update_tracking_submodules "${ROOT}/components/psp-toolchain"
-update_tracking_submodules \
-    "${ROOT}/components/psp-toolchain/components/psp-toolchain-allegrex"
-
-## PSP pacman tracks the current Arch pacman master source shallowly.
-update_tracking_submodules \
-    "${ROOT}/components/psp-toolchain/components/psp-pacman"
-
-## PSPSDK also contains a StochasticEagle forked component; keep that current.
-update_tracking_submodules "${ROOT}/components/pspsdk"
-
-## Package source components are third-party release selections.  Initialize them
-## at the revisions selected by psp-packages; do not float them to development
-## branch heads with --remote.
-git -C "${ROOT}/components/psp-packages" submodule sync --recursive
-git -C "${ROOT}/components/psp-packages" submodule update \
-    --init --recursive --depth 1
 
 ## PSPDEV is the authoritative installation location.
 if [ -z "${PSPDEV:-}" ]; then
@@ -76,6 +57,11 @@ if [[ "${1:-}" == "p" ]]; then
 fi
 FULL_BUILD=0
 (( $# == 0 )) && FULL_BUILD=1
+
+PROGRESS_ACTIVE=0
+if [[ -n "${PROGRESS_MODE}" && -t 1 && -z "${CI:-}" ]]; then
+    PROGRESS_ACTIVE=1
+fi
 
 clear_pspdev_contents() {
     local dir
@@ -158,17 +144,45 @@ render_stage_progress() {
     local total="$2"
     local label="$3"
     local last="$4"
+    local columns=80
     local width=30
-    local filled=$(( step * width / total ))
-    local empty=$(( width - filled ))
+    local filled
+    local empty
     local done_bar
     local left_bar
+    local suffix
+    local max_width
+    local max_status
 
+    if [[ -t 1 ]]; then
+        columns="$(tput cols 2>/dev/null || printf '80')"
+    fi
+    [[ "${columns}" =~ ^[0-9]+$ ]] || columns=80
+    (( columns < 40 )) && columns=40
+
+    suffix="${step}/${total} ${label}"
+    max_width=$(( columns - ${#suffix} - 4 ))
+    (( max_width < width )) && width="${max_width}"
+    (( width < 10 )) && width=10
+
+    filled=$(( step * width / total ))
+    empty=$(( width - filled ))
     printf -v done_bar '%*s' "${filled}" ''
     printf -v left_bar '%*s' "${empty}" ''
     done_bar="${done_bar// /#}"
     left_bar="${left_bar// /-}"
-    printf '\033[2A\r\033[2K[%s%s] %d/%d %s\n\r\033[2K%s\n' "${done_bar}" "${left_bar}" "${step}" "${total}" "${label}" "${last}"
+
+    last="${last//$'\r'/ }"
+    max_status=$(( columns - 1 ))
+    if (( ${#last} > max_status )); then
+        if (( max_status > 3 )); then
+            last="${last:0:max_status-3}..."
+        else
+            last="${last:0:max_status}"
+        fi
+    fi
+
+    printf '\033[2A\r\033[2K[%s%s] %s\n\r\033[2K%s\n' "${done_bar}" "${left_bar}" "${suffix}" "${last}"
 }
 
 persist_progress_log() {
@@ -177,6 +191,66 @@ persist_progress_log() {
 
     pspdev_run_install mkdir -p "${PSPDEV}/build/logs"
     pspdev_run_install cp "${source}" "${destination}"
+}
+
+PREPARATION_LOG=""
+PREPARATION_LOG_FINAL=""
+
+start_preparation_progress() {
+    local stamp
+
+    (( PROGRESS_ACTIVE )) || return 0
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    PREPARATION_LOG="$(mktemp)"
+    PREPARATION_LOG_FINAL="${PSPDEV}/build/logs/preparation-${stamp}.log"
+    printf 'START preparation\n' > "${PREPARATION_LOG}"
+    printf '\n\n'
+    render_stage_progress 0 "${#BUILD_SCRIPTS[@]}" "Preparing PSPDEV" "Preparing source trees"
+}
+
+persist_preparation_log() {
+    [[ -n "${PREPARATION_LOG}" && -f "${PREPARATION_LOG}" ]] || return 0
+    [[ -n "${PREPARATION_LOG_FINAL}" ]] || return 0
+    persist_progress_log "${PREPARATION_LOG}" "${PREPARATION_LOG_FINAL}"
+}
+
+run_preparation_command() {
+    local message="$1"
+    local status
+    local last
+    shift
+
+    if (( ! PROGRESS_ACTIVE )); then
+        "$@"
+        return
+    fi
+
+    render_stage_progress 0 "${#BUILD_SCRIPTS[@]}" "Preparing PSPDEV" "${message}"
+    printf 'STATUS %s\n' "${message}" >> "${PREPARATION_LOG}"
+
+    set +e
+    "$@" >> "${PREPARATION_LOG}" 2>&1
+    status=$?
+    set -e
+
+    if (( status != 0 )); then
+        last="$(tail -n 1 "${PREPARATION_LOG}")"
+        printf 'FAILED status=%s\n' "${status}" >> "${PREPARATION_LOG}"
+        render_stage_progress 0 "${#BUILD_SCRIPTS[@]}" "Preparing PSPDEV" "${last}"
+        persist_preparation_log
+        printf 'Log: %s\n' "${PREPARATION_LOG_FINAL}"
+        return "${status}"
+    fi
+}
+
+finish_preparation_progress() {
+    (( PROGRESS_ACTIVE )) || return 0
+    printf 'DONE preparation\n' >> "${PREPARATION_LOG}"
+    render_stage_progress 0 "${#BUILD_SCRIPTS[@]}" "Preparing PSPDEV" "Source preparation complete"
+    persist_preparation_log
+    rm -f "${PREPARATION_LOG}"
+    PREPARATION_LOG=""
+    printf 'Log: %s\n' "${PREPARATION_LOG_FINAL}"
 }
 
 run_progress_step() {
@@ -245,6 +319,30 @@ run_progress_step() {
     return "${status}"
 }
 
+start_preparation_progress
+
+## Refresh the top-level StochasticEagle forks to their configured branch heads.
+update_tracking_submodules "${ROOT}"
+
+## The toolchain hierarchy consists of StochasticEagle forks and is intentionally
+## floating: always build the current configured fork branches recursively.
+update_tracking_submodules "${ROOT}/components/psp-toolchain"
+update_tracking_submodules "${ROOT}/components/psp-toolchain/components/psp-toolchain-allegrex"
+
+## PSP pacman tracks the current Arch pacman master source shallowly.
+update_tracking_submodules "${ROOT}/components/psp-toolchain/components/psp-pacman"
+
+## PSPSDK also contains a StochasticEagle forked component; keep that current.
+update_tracking_submodules "${ROOT}/components/pspsdk"
+
+## Package source components are third-party release selections. Initialize them
+## at the revisions selected by psp-packages; do not float them to development
+## branch heads with --remote.
+run_preparation_command "Synchronizing psp-packages sources" git -C "${ROOT}/components/psp-packages" submodule sync --recursive
+run_preparation_command "Initializing psp-packages sources" git -C "${ROOT}/components/psp-packages" submodule update --init --recursive --depth 1
+
+finish_preparation_progress
+
 ## Run dependency checks.
 for SCRIPT in "${DEPEND_SCRIPTS[@]}"; do
     "${SCRIPT}"
@@ -267,7 +365,7 @@ if (( $# > 0 )); then
         fi
 
         SCRIPT="${BUILD_SCRIPTS[STEP-1]}"
-        if [[ -n "${PROGRESS_MODE}" && -t 1 && -z "${CI:-}" ]]; then
+        if (( PROGRESS_ACTIVE )); then
             run_progress_step "${STEP}" "${SCRIPT}"
         else
             "${SCRIPT}"
@@ -280,7 +378,7 @@ else
     STEP=0
     for SCRIPT in "${BUILD_SCRIPTS[@]}"; do
         STEP=$(( STEP + 1 ))
-        if [[ -n "${PROGRESS_MODE}" && -t 1 && -z "${CI:-}" ]]; then
+        if (( PROGRESS_ACTIVE )); then
             run_progress_step "${STEP}" "${SCRIPT}"
         else
             "${SCRIPT}"
