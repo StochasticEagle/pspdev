@@ -108,8 +108,7 @@ if (( FULL_BUILD )) && [[ -e "${PSPDEV}" ]]; then
             exit 1
         fi
 
-        printf 'Full build will permanently remove all contents of the existing PSPDEV installation:\n  %s\n' "${PSPDEV}"
-        printf 'The PSPDEV directory itself will be preserved.\n'
+        printf 'Full build will permanently remove all contents of the existing PSPDEV installation, preserving the directory itself:\n  %s\n' "${PSPDEV}"
         printf 'Type the full path exactly to confirm removal of its contents: '
         IFS= read -r confirmation
         if [[ "${confirmation}" != "${PSPDEV}" ]]; then
