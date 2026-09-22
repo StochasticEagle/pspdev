@@ -4,6 +4,8 @@
 set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_ROOT="${ROOT}/build"
+LOG_ROOT="${BUILD_ROOT}/_logs"
 source "${ROOT}/install-permissions.sh"
 
 ## Update branch-tracking submodules shallowly.
@@ -189,8 +191,8 @@ persist_progress_log() {
     local source="$1"
     local destination="$2"
 
-    pspdev_run_install mkdir -p "${PSPDEV}/build/logs"
-    pspdev_run_install cp "${source}" "${destination}"
+    mkdir -p "${LOG_ROOT}"
+    cp "${source}" "${destination}"
 }
 
 PREPARATION_LOG=""
@@ -202,7 +204,7 @@ start_preparation_progress() {
     (( PROGRESS_ACTIVE )) || return 0
     stamp="$(date +%Y%m%d-%H%M%S)"
     PREPARATION_LOG="$(mktemp)"
-    PREPARATION_LOG_FINAL="${PSPDEV}/build/logs/preparation-${stamp}.log"
+    PREPARATION_LOG_FINAL="${LOG_ROOT}/preparation-${stamp}.log"
     printf 'START preparation\n' > "${PREPARATION_LOG}"
     printf '\n\n'
     render_stage_progress 0 "${#BUILD_SCRIPTS[@]}" "Preparing PSPDEV" "Preparing source trees"
@@ -250,7 +252,6 @@ finish_preparation_progress() {
     persist_preparation_log
     rm -f "${PREPARATION_LOG}"
     PREPARATION_LOG=""
-    printf 'Log: %s\n' "${PREPARATION_LOG_FINAL}"
 }
 
 run_progress_step() {
@@ -272,10 +273,9 @@ run_progress_step() {
     label="$(stage_label "${step}")"
     stamp="$(date +%Y%m%d-%H%M%S)"
     temp_log="$(mktemp)"
-    final_log="${PSPDEV}/build/logs/step-${step}-${stamp}.log"
+    final_log="${LOG_ROOT}/step-${step}-${stamp}.log"
     printf 'START step=%s label=%s\n' "${step}" "${label}" > "${temp_log}"
 
-    printf '\n\n'
     render_stage_progress "${step}" "${total}" "${label}" "Starting ${label}"
 
     set +e
@@ -309,13 +309,13 @@ run_progress_step() {
         render_stage_progress "${step}" "${total}" "${label}" "Completed ${label}"
     else
         printf 'FAILED step=%s label=%s status=%s\n' "${step}" "${label}" "${status}" >> "${temp_log}"
-        last="$(tail -n 1 "${temp_log}")"
+        last="$(grep -E '^(ERROR:|WARNING:)' "${temp_log}" | tail -n 1 || true)"
+        [[ -n "${last}" ]] || last="$(tail -n 1 "${temp_log}")"
         render_stage_progress "${step}" "${total}" "${label}" "${last}"
     fi
 
     persist_progress_log "${temp_log}" "${final_log}"
     rm -f "${temp_log}"
-    printf 'Log: %s\n' "${final_log}"
     return "${status}"
 }
 
@@ -341,12 +341,16 @@ update_tracking_submodules "${ROOT}/components/pspsdk"
 run_preparation_command "Synchronizing psp-packages sources" git -C "${ROOT}/components/psp-packages" submodule sync --recursive
 run_preparation_command "Initializing psp-packages sources" git -C "${ROOT}/components/psp-packages" submodule update --init --recursive --depth 1
 
-finish_preparation_progress
-
 ## Run dependency checks.
 for SCRIPT in "${DEPEND_SCRIPTS[@]}"; do
-    "${SCRIPT}"
+    if (( PROGRESS_ACTIVE )); then
+        run_preparation_command "Checking $(basename "${SCRIPT}")" "${SCRIPT}"
+    else
+        "${SCRIPT}"
+    fi
 done
+
+finish_preparation_progress
 
 if (( ${#BUILD_SCRIPTS[@]} == 0 )); then
     echo "ERROR: No build scripts found."
