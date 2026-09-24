@@ -1,5 +1,6 @@
 # Local PSPDEV installation prefix
 /pspdev/
+/build/
 
 # Local OS metadata
 .DS_Store
