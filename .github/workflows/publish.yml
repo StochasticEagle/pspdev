@@ -1,0 +1,124 @@
+name: Publish PSPDEV
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example: v20260924)"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: pspdev-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Select successful CI build
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          selected_run=""
+          selected_artifact=""
+
+          while IFS= read -r run_id; do
+            [[ -n "$run_id" ]] || continue
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "pspdev-ubuntu-latest-x86_64" and .expired == false) | .id' | head -n 1)"
+            if [[ -n "$artifact_id" ]]; then
+              selected_run="$run_id"
+              selected_artifact="$artifact_id"
+              break
+            fi
+          done < <(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/compilation.yml/runs?branch=${GITHUB_REF_NAME}&status=success&per_page=100" --jq '.workflow_runs[] | select(.name == "CI" and .conclusion == "success") | .id')
+
+          if [[ -z "$selected_run" || -z "$selected_artifact" ]]; then
+            echo "::error::No successful CI run on ${GITHUB_REF_NAME} has a non-expired PSPDEV artifact."
+            exit 1
+          fi
+
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${selected_run}")"
+          head_sha="$(jq -r '.head_sha // ""' <<<"$run_json")"
+          run_number="$(jq -r '.run_number' <<<"$run_json")"
+
+          if [[ -z "$head_sha" ]]; then
+            echo "::error::Unable to determine the tested commit for CI run ${selected_run}."
+            exit 1
+          fi
+
+          echo "run_id=$selected_run" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=$selected_artifact" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "run_number=$run_number" >> "$GITHUB_OUTPUT"
+          echo "Using CI #${run_number} at ${head_sha} (artifact ${selected_artifact})."
+
+      - name: Validate release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ -z "$RELEASE_TAG" || "$RELEASE_TAG" =~ [[:space:]] ]]; then
+            echo "::error::Release tag must be non-empty and contain no whitespace."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release '$RELEASE_TAG' already exists."
+            exit 1
+          fi
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag '$RELEASE_TAG' already exists without a release."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.ci.outputs.head_sha }}
+          fetch-depth: 1
+          submodules: false
+
+      - name: Download tested PSPDEV artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: pspdev-ubuntu-latest-x86_64
+          path: release
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.ci.outputs.run_id }}
+
+      - name: Verify release archive
+        run: |
+          archive="release/pspdev-ubuntu-latest-x86_64.tar.gz"
+          test -s "$archive"
+          tar -tzf "$archive" > "$RUNNER_TEMP/pspdev-archive.txt"
+
+          for required in             pspdev/bin/psp-gcc             pspdev/bin/psp-config             pspdev/psp/sdk/lib/libpspsdk.a             pspdev/build.txt; do
+            if ! grep -Fxq "$required" "$RUNNER_TEMP/pspdev-archive.txt"; then
+              echo "::error::Release archive is missing $required"
+              exit 1
+            fi
+          done
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          TESTED_SHA: ${{ steps.ci.outputs.head_sha }}
+          CI_RUN_NUMBER: ${{ steps.ci.outputs.run_number }}
+        run: |
+          {
+            echo "PSPDEV release built and verified by CI #${CI_RUN_NUMBER}."
+            echo
+            echo "Tested commit: \`${TESTED_SHA}\`"
+            echo
+            echo "This archive contains the complete Ubuntu x86_64 PSPDEV installation rooted at \`pspdev/\`."
+          } > release-notes.md
+
+          gh release create "$RELEASE_TAG"             release/pspdev-ubuntu-latest-x86_64.tar.gz             --repo "$GITHUB_REPOSITORY"             --target "$TESTED_SHA"             --title "$RELEASE_TAG"             --notes-file release-notes.md             --latest

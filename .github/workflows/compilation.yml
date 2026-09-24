@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   checks: write
 
 concurrency:
@@ -14,28 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prepare-release:
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Generate changelog
-        run: |
-          echo "We are pleased to announce the ${{ github.ref_name }} release of this PSPDEV fork." > changelog.md
-          echo "" >> changelog.md
-          echo "Source and installation information: https://github.com/StochasticEagle/pspdev" >> changelog.md
-          echo "" >> changelog.md
-          ./build-changelog.sh >> changelog.md
-
-      - name: Create release
-        uses: softprops/action-gh-release@v3
-        with:
-          body_path: changelog.md
-          make_latest: true
-          tag_name: ${{ github.ref_name }}
-
   build:
     runs-on: ${{ matrix.os[0] }}
     strategy:
@@ -107,13 +85,6 @@ jobs:
         with:
           name: pspdev-${{ matrix.os[0] }}-${{ matrix.os[1] }}
           path: pspdev-${{ matrix.os[0] }}-${{ matrix.os[1] }}.tar.gz
-
-      - name: Attach tagged release artifact
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v3
-        with:
-          files: pspdev-${{ matrix.os[0] }}-${{ matrix.os[1] }}.tar.gz
-          tag_name: ${{ github.ref_name }}
 
 #   build-containers:
 #     runs-on: ubuntu-latest
