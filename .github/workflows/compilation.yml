@@ -78,10 +78,27 @@ jobs:
           echo "$PSPDEV/bin" >> "$GITHUB_PATH"
           test "$(psp-gcc -dumpmachine)" = "psp"
 
+      - name: Install prebuilt PSPSDK
+        run: |
+          archive="$RUNNER_TEMP/pspsdk-ubuntu-x86_64.tar.gz"
+
+          wget -q \
+            https://github.com/StochasticEagle/pspsdk/releases/latest/download/pspsdk-ubuntu-x86_64.tar.gz \
+            -O "$archive"
+          sudo tar -xzf "$archive" -C /opt
+          sudo chown -R "$(id -u):$(id -g)" "$PSPDEV"
+
+          export PATH="$PSPDEV/bin:$PATH"
+          test "$(psp-config --pspsdk-path)" = "$PSPDEV/psp/sdk"
+          test -f "$PSPDEV/psp/sdk/lib/libpspsdk.a"
+          test -f "$PSPDEV/psp/sdk/lib/build.mak"
+
       - name: Build PSPDEV
+        env:
+          PSP_PACKAGE_REPO_REQUIRED: "1"
         run: |
           export PATH="$PSPDEV/bin:$PATH"
-          ./build-all.sh 2 3 4 5
+          ./build-all.sh 3 4 5
 
       - name: Archive PSPDEV
         run: tar -zcvf "pspdev-${{ matrix.os[0] }}-${{ matrix.os[1] }}.tar.gz" -C /opt pspdev

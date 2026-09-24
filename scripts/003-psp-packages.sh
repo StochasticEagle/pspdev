@@ -40,12 +40,14 @@ else
         exit 1
     fi
 
-    # Prefer the published package repository when it is available. Until the
-    # repository is populated, or if it is temporarily unavailable, fall back
-    # to the checked-out package recipes instead of aborting the PSPDEV build.
+    # Prefer the published package repository. CI can require this path so a
+    # broken or stale package site cannot be masked by a local source build.
     if psp-pacman -Sy --noconfirm &&
        psp-pacman -S --needed --noconfirm psp-libraries; then
         :
+    elif [ -n "${PSP_PACKAGE_REPO_REQUIRED:-}" ] && [ "${PSP_PACKAGE_REPO_REQUIRED}" != "0" ]; then
+        echo "ERROR: Published PSP package repository is unavailable or incomplete."
+        exit 1
     else
         echo "WARNING: PSP package repository is unavailable; using local package builds."
         build_local_packages
