@@ -65,6 +65,33 @@ if [[ -n "${PROGRESS_MODE}" && -t 1 && -z "${CI:-}" ]]; then
     PROGRESS_ACTIVE=1
 fi
 
+mkdir -p "${LOG_ROOT}"
+rm -f "${LOG_ROOT}"/preparation-*.log "${LOG_ROOT}"/step-*.log
+
+prune_build_logs() {
+    local -a logs=()
+
+    shopt -s nullglob
+    logs=("${LOG_ROOT}"/build-*.log)
+    shopt -u nullglob
+
+    if (( ${#logs[@]} <= 4 )); then
+        return
+    fi
+
+    mapfile -t logs < <(printf '%s\n' "${logs[@]}" | LC_ALL=C sort -r)
+    rm -f -- "${logs[@]:4}"
+}
+
+BUILD_LOG="${LOG_ROOT}/build-$(date +%Y%m%d-%H%M%S).log"
+: > "${BUILD_LOG}"
+prune_build_logs
+
+if (( ! PROGRESS_ACTIVE )); then
+    exec > >(tee "${BUILD_LOG}") 2>&1
+fi
+printf 'Log: %s\n' "${BUILD_LOG}"
+
 clear_pspdev_contents() {
     local dir
 
@@ -188,10 +215,8 @@ render_stage_progress() {
 
 persist_progress_log() {
     local source="$1"
-    local destination="$2"
 
-    mkdir -p "${LOG_ROOT}"
-    cp "${source}" "${destination}"
+    cat "${source}" >> "${BUILD_LOG}"
 }
 
 PREPARATION_LOG=""
@@ -203,7 +228,7 @@ start_preparation_progress() {
     (( PROGRESS_ACTIVE )) || return 0
     stamp="$(date +%Y%m%d-%H%M%S)"
     PREPARATION_LOG="$(mktemp)"
-    PREPARATION_LOG_FINAL="${LOG_ROOT}/preparation-${stamp}.log"
+    PREPARATION_LOG_FINAL="${BUILD_LOG}"
     printf 'START preparation\n' > "${PREPARATION_LOG}"
     printf '\n\n'
     render_stage_progress 0 "${#BUILD_SCRIPTS[@]}" "Preparing PSPDEV" "Preparing source trees"
@@ -272,7 +297,7 @@ run_progress_step() {
     label="$(stage_label "${step}")"
     stamp="$(date +%Y%m%d-%H%M%S)"
     temp_log="$(mktemp)"
-    final_log="${LOG_ROOT}/step-${step}-${stamp}.log"
+    final_log="${BUILD_LOG}"
     printf 'START step=%s label=%s\n' "${step}" "${label}" > "${temp_log}"
 
     render_stage_progress "${step}" "${total}" "${label}" "Starting ${label}"
