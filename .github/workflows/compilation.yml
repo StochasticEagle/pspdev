@@ -42,10 +42,10 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - [macos-latest, arm64, bash]
-          - [macos-15-intel, x86_64, bash]
+          # - [macos-latest, arm64, bash]
+          # - [macos-15-intel, x86_64, bash]
           - [ubuntu-latest, x86_64, bash]
-          - [ubuntu-24.04-arm, arm64, bash]
+          # - [ubuntu-24.04-arm, arm64, bash]
 
     defaults:
       run:
@@ -61,19 +61,30 @@ jobs:
       - name: Install dependencies
         run: ./prepare.sh
 
+      - name: Install prebuilt PSP toolchain
+        run: |
+          export PSPDEV=/opt/pspdev
+          archive="$RUNNER_TEMP/psp-toolchain-ubuntu-x86_64.tar.gz"
+
+          sudo rm -rf "$PSPDEV"
+          wget -q \
+            https://github.com/StochasticEagle/psp-toolchain/releases/latest/download/psp-toolchain-ubuntu-x86_64.tar.gz \
+            -O "$archive"
+          sudo tar -xzf "$archive" -C /opt
+          sudo chown -R "$(id -u):$(id -g)" "$PSPDEV"
+
+          export PATH="$PSPDEV/bin:$PATH"
+          echo "PSPDEV=$PSPDEV" >> "$GITHUB_ENV"
+          echo "$PSPDEV/bin" >> "$GITHUB_PATH"
+          test "$(psp-gcc -dumpmachine)" = "psp"
+
       - name: Build PSPDEV
         run: |
-          if [[ "${{ matrix.os[0] }}" == macos* ]]; then
-            export PATH="$(brew --prefix gnu-sed)/libexec/gnubin:$PATH"
-            export PATH="$(brew --prefix libtool)/libexec/gnubin:$PATH"
-            export PKG_CONFIG_PATH="$(brew --prefix libarchive)/lib/pkgconfig:$(brew --prefix openssl)/lib/pkgconfig"
-          fi
-          export PSPDEV="$PWD/pspdev"
           export PATH="$PSPDEV/bin:$PATH"
-          ./build-all.sh
+          ./build-all.sh 2 3 4 5
 
       - name: Archive PSPDEV
-        run: tar -zcvf "pspdev-${{ matrix.os[0] }}-${{ matrix.os[1] }}.tar.gz" pspdev
+        run: tar -zcvf "pspdev-${{ matrix.os[0] }}-${{ matrix.os[1] }}.tar.gz" -C /opt pspdev
 
       - uses: actions/upload-artifact@v7
         with:
@@ -87,63 +98,63 @@ jobs:
           files: pspdev-${{ matrix.os[0] }}-${{ matrix.os[1] }}.tar.gz
           tag_name: ${{ github.ref_name }}
 
-  build-containers:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        container:
-          - [fedora, latest]
-          - [debian, latest]
-
-    container: ${{ matrix.container[0] }}:${{ matrix.container[1] }}
-
-    steps:
-      - name: Install bootstrap tools on Fedora
-        if: matrix.container[0] == 'fedora'
-        run: |
-          dnf -y install git sudo
-          useradd -m build
-
-      - name: Install bootstrap tools on Debian
-        if: matrix.container[0] == 'debian'
-        run: |
-          apt-get update
-          apt-get install -y git sudo
-          useradd -m build
-
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: ./prepare.sh
-
-      - name: Build PSPDEV
-        run: |
-          export PSPDEV="$PWD/pspdev"
-          export PATH="$PSPDEV/bin:$PATH"
-          chown -R build:build .
-          sudo -u build env PSPDEV="$PSPDEV" PATH="$PATH" ./build-all.sh
-
-      - name: Archive PSPDEV
-        run: tar -zcvf "pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}.tar.gz" pspdev
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}
-          path: pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}.tar.gz
-
-      - name: Attach tagged release artifact
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v3
-        with:
-          files: pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}.tar.gz
-          tag_name: ${{ github.ref_name }}
-
+#   build-containers:
+#     runs-on: ubuntu-latest
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         container:
+#           - [fedora, latest]
+#           - [debian, latest]
+#
+#     container: ${{ matrix.container[0] }}:${{ matrix.container[1] }}
+#
+#     steps:
+#       - name: Install bootstrap tools on Fedora
+#         if: matrix.container[0] == 'fedora'
+#         run: |
+#           dnf -y install git sudo
+#           useradd -m build
+#
+#       - name: Install bootstrap tools on Debian
+#         if: matrix.container[0] == 'debian'
+#         run: |
+#           apt-get update
+#           apt-get install -y git sudo
+#           useradd -m build
+#
+#       - uses: actions/checkout@v6
+#
+#       - name: Install dependencies
+#         run: ./prepare.sh
+#
+#       - name: Build PSPDEV
+#         run: |
+#           export PSPDEV="$PWD/pspdev"
+#           export PATH="$PSPDEV/bin:$PATH"
+#           chown -R build:build .
+#           sudo -u build env PSPDEV="$PSPDEV" PATH="$PATH" ./build-all.sh
+#
+#       - name: Archive PSPDEV
+#         run: tar -zcvf "pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}.tar.gz" pspdev
+#
+#       - uses: actions/upload-artifact@v7
+#         with:
+#           name: pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}
+#           path: pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}.tar.gz
+#
+#       - name: Attach tagged release artifact
+#         if: github.ref_type == 'tag'
+#         uses: softprops/action-gh-release@v3
+#         with:
+#           files: pspdev-${{ matrix.container[0] }}-${{ matrix.container[1] }}.tar.gz
+#           tag_name: ${{ github.ref_name }}
+#
   legacy-prx-status:
     if: always()
     needs:
       - build
-      - build-containers
+      # - build-containers
     runs-on: ubuntu-latest
 
     steps:
