@@ -41,7 +41,23 @@ update_tracking_submodules() {
 
         run_preparation_command "Fetching ${display}" git -C "${subrepo}" fetch --depth 1 origin \
             "+refs/heads/${branch}:refs/remotes/origin/${branch}"
-        run_preparation_command "Updating ${display}" git -C "${subrepo}" checkout --detach "refs/remotes/origin/${branch}"
+
+        local current target deepen
+        current="$(git -C "${subrepo}" rev-parse HEAD)"
+        target="$(git -C "${subrepo}" rev-parse "refs/remotes/origin/${branch}")"
+
+        if [[ "${current}" != "${target}" && "$(git -C "${subrepo}" rev-parse --is-shallow-repository)" == "true" ]]; then
+            deepen=1
+            while ! git -C "${subrepo}" merge-base --is-ancestor "${current}" "${target}" 2>/dev/null; do
+                run_preparation_command "Deepening ${display}" git -C "${subrepo}" fetch --deepen "${deepen}" origin "${branch}"
+                if [[ "$(git -C "${subrepo}" rev-parse --is-shallow-repository)" != "true" ]]; then
+                    break
+                fi
+                deepen=$(( deepen * 2 ))
+            done
+        fi
+
+        run_preparation_command "Updating ${display}" git -C "${subrepo}" checkout --detach "${target}"
     done < <(git -C "${repo}" config -f .gitmodules \
         --get-regexp '^submodule\..*\.branch$' || true)
 }
