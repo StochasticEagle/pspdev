@@ -12,6 +12,50 @@ if [ ! -f "${PSPSDK_SOURCE}/build-cfw-and-install.sh" ]; then
     exit 1
 fi
 
+
+package_repo_source_sha() {
+    local server arch
+
+    server="$(awk '
+        /^\[pspdev\]$/ { in_repo = 1; next }
+        /^\[/ { in_repo = 0 }
+        in_repo && /^[[:space:]]*Server[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, "")
+            print
+            exit
+        }
+    ' "${PSPDEV}/etc/pacman.conf")"
+
+    [[ -n "${server}" ]] || return 1
+
+    server="${server//\$repo/pspdev}"
+    if [[ "${server}" == *'\$arch'* ]]; then
+        arch="$("${PSPDEV}/share/pacman/bin/get-arch")"
+        server="${server//\$arch/${arch}}"
+    fi
+
+    wget -qO- "${server%/}/psp-packages.sha"
+}
+
+package_repo_matches_checkout() {
+    local checkout_sha remote_sha
+
+    checkout_sha="$(git -C "${PACKAGES_SOURCE}" rev-parse HEAD)"
+    remote_sha="$(package_repo_source_sha 2>/dev/null || true)"
+
+    if [[ ! "${remote_sha}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        echo "WARNING: Published PSP package repository has no valid source-SHA marker." >&2
+        return 1
+    fi
+
+    if [[ "${remote_sha,,}" != "${checkout_sha,,}" ]]; then
+        echo "WARNING: Published PSP packages were built from ${remote_sha}, but the checkout is ${checkout_sha}." >&2
+        return 1
+    fi
+
+    return 0
+}
+
 build_local_packages() {
     if [ ! -x "${PACKAGES_SOURCE}/build.sh" ]; then
         echo "ERROR: psp-packages submodule is not initialized."
@@ -40,16 +84,25 @@ else
         exit 1
     fi
 
-    # Prefer the published package repository. CI can require this path so a
-    # broken or stale package site cannot be masked by a local source build.
-    if psp-pacman -Sy --noconfirm &&
-       psp-pacman -S --needed --noconfirm psp-libraries; then
-        :
+    # Use published packages only when the repository explicitly identifies
+    # the same psp-packages commit as this checkout. Development checkouts must
+    # not silently consume stale release artifacts.
+    if package_repo_matches_checkout; then
+        if psp-pacman -Sy --noconfirm &&
+           psp-pacman -S --needed --noconfirm psp-libraries; then
+            :
+        elif [ -n "${PSP_PACKAGE_REPO_REQUIRED:-}" ] && [ "${PSP_PACKAGE_REPO_REQUIRED}" != "0" ]; then
+            echo "ERROR: Matching published PSP package repository is unavailable or incomplete."
+            exit 1
+        else
+            echo "WARNING: Matching PSP package repository could not be installed; using local package builds."
+            build_local_packages
+        fi
     elif [ -n "${PSP_PACKAGE_REPO_REQUIRED:-}" ] && [ "${PSP_PACKAGE_REPO_REQUIRED}" != "0" ]; then
-        echo "ERROR: Published PSP package repository is unavailable or incomplete."
+        echo "ERROR: Published PSP package repository does not match the checked-out psp-packages commit."
         exit 1
     else
-        echo "WARNING: PSP package repository is unavailable; using local package builds."
+        echo "Using local PSP package builds because no matching published repository exists."
         build_local_packages
     fi
 fi
