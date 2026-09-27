@@ -57,21 +57,34 @@ package_repo_matches_checkout() {
 }
 
 build_local_packages() {
+    local status
+
     if [ ! -x "${PACKAGES_SOURCE}/build.sh" ]; then
         echo "ERROR: psp-packages submodule is not initialized."
         echo "Run: git submodule update --init --recursive --depth=1 components/psp-packages"
-        exit 1
+        return 1
     fi
 
     echo "Building and installing PSP packages locally."
+
+    set +e
     (
-        cd "${PACKAGES_SOURCE}"
+        cd "${PACKAGES_SOURCE}" || exit 1
         if [[ "${PSPDEV_PROGRESS:-0}" == "1" ]]; then
             PSP_PROGRESS_PARENT=1 ./build.sh p --install
         else
             ./build.sh --install
         fi
     )
+    status=$?
+    set -e
+
+    if (( status != 0 )); then
+        echo "ERROR: Local PSP package fallback failed with status ${status}."
+        return "${status}"
+    fi
+
+    return 0
 }
 
 if [ -n "${LOCAL_PACKAGE_BUILD:-}" ] && [ "${LOCAL_PACKAGE_BUILD}" != "0" ]; then
@@ -85,9 +98,14 @@ else
     fi
 
     # Use published packages only when the repository explicitly identifies
-    # the same psp-packages commit as this checkout. Development checkouts must
-    # not silently consume stale release artifacts.
+    # the same psp-packages commit as this checkout. A mismatch is data, not a
+    # shell failure: normal development builds fall back to the local checkout.
+    repo_matches=0
     if package_repo_matches_checkout; then
+        repo_matches=1
+    fi
+
+    if (( repo_matches )); then
         if psp-pacman -Sy --noconfirm &&
            psp-pacman -S --needed --noconfirm psp-libraries; then
             :
