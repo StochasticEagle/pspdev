@@ -306,13 +306,14 @@ run_progress_step() {
     if (( step == 3 )); then
         PSPDEV_PROGRESS=1 "${script}" 2>&1 |
             while IFS= read -r line; do
-                if [[ "${line}" == PSP_PROGRESS* || "${line}" == ERROR:* || "${line}" == WARNING:* ]]; then
-                    printf '%s\n' "${line}" >> "${temp_log}"
-                fi
+                printf '%s\n' "${line}" >> "${temp_log}"
+
                 if [[ "${line}" == PSP_PROGRESS* ]]; then
                     IFS="$(printf '\t')" read -r _ current package_total package state <<< "${line}"
                     render_stage_progress "${step}" "${total}" "${label}" "Packages ${current}/${package_total}: ${state} ${package}"
                 elif [[ "${line}" == ERROR:* || "${line}" == WARNING:* ]]; then
+                    render_stage_progress "${step}" "${total}" "${label}" "${line}"
+                elif [[ "${line}" =~ ^(Using[[:space:]]local[[:space:]]PSP[[:space:]]package|Building[[:space:]]and[[:space:]]installing[[:space:]]PSP[[:space:]]packages|Validated[[:space:]]|Initializing[[:space:]]package[[:space:]]source|Package[[:space:]]source[[:space:]]submodules|Installing[[:space:]][0-9]+[[:space:]]current[[:space:]]package[[:space:]]prerequisites) ]]; then
                     render_stage_progress "${step}" "${total}" "${label}" "${line}"
                 fi
             done
