@@ -311,6 +311,9 @@ run_progress_step() {
                 if [[ "${line}" == PSP_PROGRESS* ]]; then
                     IFS="$(printf '\t')" read -r _ current package_total package state <<< "${line}"
                     render_stage_progress "${step}" "${total}" "${label}" "Packages ${current}/${package_total}: ${state} ${package}"
+                elif [[ "${line}" == PSP_STATUS* ]]; then
+                    IFS="$(printf '\t')" read -r _ state <<< "${line}"
+                    render_stage_progress "${step}" "${total}" "${label}" "${state}"
                 elif [[ "${line}" == ERROR:* || "${line}" == WARNING:* ]]; then
                     render_stage_progress "${step}" "${total}" "${label}" "${line}"
                 elif [[ "${line}" =~ ^(Using[[:space:]]local[[:space:]]PSP[[:space:]]package|Building[[:space:]]and[[:space:]]installing[[:space:]]PSP[[:space:]]packages|Validated[[:space:]]|Initializing[[:space:]]package[[:space:]]source|Package[[:space:]]source[[:space:]]submodules|Installing[[:space:]][0-9]+[[:space:]]current[[:space:]]package[[:space:]]prerequisites) ]]; then
@@ -334,8 +337,90 @@ run_progress_step() {
         render_stage_progress "${step}" "${total}" "${label}" "Completed ${label}"
     else
         printf 'FAILED step=%s label=%s status=%s\n' "${step}" "${label}" "${status}" >> "${temp_log}"
-        last="$(grep -E '^(ERROR:|WARNING:)' "${temp_log}" | tail -n 1 || true)"
-        [[ -n "${last}" ]] || last="$(tail -n 1 "${temp_log}")"
+        last="$(grep -E '(^ERROR:|error:|Error [0-9]+|FAILED|collect2: error|ld: cannot find)' "${temp_log}" | tail -n 1 || true)"
+        [[ -n "${last}" ]] || last="$(grep -Ev '^(PSP_PROGRESS|PSP_STATUS)        render_stage_progress "${step}" "${total}" "${label}" "${last}"
+    fi
+
+    persist_progress_log "${temp_log}" "${final_log}"
+    rm -f "${temp_log}"
+    return "${status}"
+}
+
+start_preparation_progress
+
+## Refresh the top-level StochasticEagle forks to their configured branch heads.
+update_tracking_submodules "${ROOT}"
+
+## The toolchain hierarchy consists of StochasticEagle forks and is intentionally
+## floating: always build the current configured fork branches recursively.
+update_tracking_submodules "${ROOT}/components/psp-toolchain"
+update_tracking_submodules "${ROOT}/components/psp-toolchain/components/psp-toolchain-allegrex"
+
+## PSP pacman tracks the current Arch pacman master source shallowly.
+update_tracking_submodules "${ROOT}/components/psp-toolchain/components/psp-pacman"
+
+## PSPSDK also contains a StochasticEagle forked component; keep that current.
+update_tracking_submodules "${ROOT}/components/pspsdk"
+
+## Package source components are third-party release selections. Initialize them
+## at the revisions selected by psp-packages; do not float them to development
+## branch heads with --remote.
+run_preparation_command "Synchronizing psp-packages sources" git -C "${ROOT}/components/psp-packages" submodule sync --recursive
+run_preparation_command "Initializing psp-packages sources" git -C "${ROOT}/components/psp-packages" submodule update --init --recursive --depth 1
+
+## Run dependency checks.
+for SCRIPT in "${DEPEND_SCRIPTS[@]}"; do
+    if (( PROGRESS_ACTIVE )); then
+        run_preparation_command "Checking $(basename "${SCRIPT}")" "${SCRIPT}"
+    else
+        "${SCRIPT}"
+    fi
+done
+
+finish_preparation_progress
+
+if (( ${#BUILD_SCRIPTS[@]} == 0 )); then
+    echo "ERROR: No build scripts found."
+    exit 1
+fi
+
+## If specific steps were requested...
+if (( $# > 0 )); then
+
+    for STEP in "$@"; do
+        if [[ ! "${STEP}" =~ ^[1-9][0-9]*$ ]] ||
+           (( STEP > ${#BUILD_SCRIPTS[@]} )); then
+            echo "ERROR: Invalid build step '${STEP}'."
+            echo "Valid steps are 1-${#BUILD_SCRIPTS[@]}."
+            exit 1
+        fi
+
+        SCRIPT="${BUILD_SCRIPTS[STEP-1]}"
+        if (( PROGRESS_ACTIVE )); then
+            run_progress_step "${STEP}" "${SCRIPT}"
+        else
+            "${SCRIPT}"
+        fi
+    done
+
+else
+
+    ## Run all build scripts.
+    STEP=0
+    for SCRIPT in "${BUILD_SCRIPTS[@]}"; do
+        STEP=$(( STEP + 1 ))
+        if (( PROGRESS_ACTIVE )); then
+            run_progress_step "${STEP}" "${SCRIPT}"
+        else
+            "${SCRIPT}"
+        fi
+    done
+
+fi
+
+## Store build information.
+pspdev_record_build_info "pspdev" "$(git -C "${ROOT}" log -1 --format="pspdev %H %cs %s")"
+ "${temp_log}" | tail -n 1)"
         render_stage_progress "${step}" "${total}" "${label}" "${last}"
     fi
 
