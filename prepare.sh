@@ -42,6 +42,7 @@ TESTOS="${ID:-unknown}"
 case "${TESTOS}" in
 
 ubuntu | linuxmint | debian | pop)
+    apt-get update
     apt-get -y --no-install-recommends install \
         gcc g++ make git patch file \
         autoconf automake cmake \
