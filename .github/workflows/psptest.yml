@@ -1,0 +1,83 @@
+name: PSPTEST
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: psptest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Initialize pinned sources
+        run: |
+          git -c remote.origin.tagOpt=--no-tags submodule update --init --recursive --depth 1 components/pspsdk
+          git -c remote.origin.tagOpt=--no-tags submodule update --init --depth 1 components/psp-packages
+          git submodule status components/pspsdk components/psp-packages
+
+      - name: Install host dependencies
+        run: ./prepare.sh
+
+      - name: Install prebuilt PSP toolchain
+        run: |
+          export PSPDEV=/opt/pspdev
+          archive="$RUNNER_TEMP/psp-toolchain-ubuntu-x86_64.tar.gz"
+
+          sudo rm -rf "$PSPDEV"
+          wget -q \
+            https://github.com/StochasticEagle/psp-toolchain/releases/latest/download/psp-toolchain-ubuntu-x86_64.tar.gz \
+            -O "$archive"
+          sudo tar -xzf "$archive" -C /opt
+          sudo chown -R "$(id -u):$(id -g)" "$PSPDEV"
+
+          echo "PSPDEV=$PSPDEV" >> "$GITHUB_ENV"
+          echo "$PSPDEV/bin" >> "$GITHUB_PATH"
+
+          export PATH="$PSPDEV/bin:$PATH"
+          test "$(psp-gcc -dumpmachine)" = "psp"
+
+      - name: Build pinned PSPSDK
+        run: |
+          mkdir -p ci-logs
+          set -o pipefail
+          components/pspsdk/build-and-install.sh 2>&1 | tee ci-logs/pspsdk-build.log
+
+      - name: Build and install OSLib dependency closure
+        run: |
+          mkdir -p ci-logs
+          set -o pipefail
+          (
+            cd components/psp-packages
+            ./build.sh --install oslib
+          ) 2>&1 | tee ci-logs/oslib-build.log
+
+      - name: Build PSPTEST bundle
+        run: |
+          mkdir -p ci-logs
+          set -o pipefail
+          make -C components/psp-packages/psptest bundle V=1 2>&1 | tee ci-logs/psptest-build.log
+
+      - name: Upload PSPTEST diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: psptest-diagnostics
+          if-no-files-found: warn
+          path: |
+            ci-logs/
+            components/psp-packages/build/_logs/*.log
+            components/psp-packages/psptest/oslib/*.map
+            components/psp-packages/psptest/oslib/*.elf
+            components/psp-packages/psptest/build/PSP/GAME/psptest/
