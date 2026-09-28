@@ -72,8 +72,6 @@ jobs:
           test -f "$PSPDEV/psp/sdk/lib/build.mak"
 
       - name: Build PSPDEV
-        env:
-          PSP_PACKAGE_REPO_REQUIRED: "1"
         run: |
           export PATH="$PSPDEV/bin:$PATH"
           ./build-all.sh 3 4 5
