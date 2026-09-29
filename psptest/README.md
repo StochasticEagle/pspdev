@@ -9,7 +9,7 @@ PSPTEST is PSPDEV build stage 6:
 
 Stage 6 discovers every `Makefile.test` under the PSPSDK and psp-packages `psptest/` trees and builds directly from those checked-out submodule sources. It does not copy or modify those source trees.
 
-All generated launcher, export, object, ELF, PRX, manifest, and archive output is under PSPDEV's Git-ignored `build/` directory. Stage 6 verifies that neither submodule's `psptest/` tree changes during the build.
+All generated launcher, framework, export, object, ELF, PRX, manifest, result-directory, and archive output is under PSPDEV's Git-ignored `build/` directory. Stage 6 verifies that the PSPSDK PSPTEST framework/test sources and the psp-packages PSPTEST sources are unchanged by the build.
 
 The PSPTEST program is built as a complete Memory Stick tree at:
 

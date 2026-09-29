@@ -78,6 +78,5 @@ jobs:
           path: |
             ci-logs/
             components/psp-packages/build/_logs/*.log
-            components/psp-packages/psptest/oslib/*.map
-            components/psp-packages/psptest/oslib/*.elf
+            build/psptest/
             build/PSP/GAME/psptest/

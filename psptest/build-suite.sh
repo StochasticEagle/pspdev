@@ -25,6 +25,15 @@ if [[ ! -f "${PSPTEST_SOURCE}/psptest.h" || ! -f "${PSPTEST_SOURCE}/psptest.c" ]
     exit 1
 fi
 
+source_tree_state() {
+    local repository="$1"
+    shift
+    git -C "${repository}" status --porcelain=v1 --untracked-files=all --ignored=matching -- "$@"
+}
+
+PSPSDK_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/pspsdk" src/psptest psptest)"
+PACKAGES_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/psp-packages" psptest)"
+
 rm -rf "${BUILD_ROOT}" "${PROGRAM_ROOT}"
 mkdir -p "${FRAMEWORK_BUILD}" "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${PROGRAM_ROOT}/results"
 
@@ -33,17 +42,9 @@ psp-gcc -O2 -G0 -Wall -Wextra -Werror -I"${PSPTEST_SOURCE}" -I"${PSPSDK}/include
 psp-gcc-ar rcs "${FRAMEWORK_BUILD}/libpsptest.a" "${FRAMEWORK_BUILD}/psptest.o"
 psp-gcc-ranlib "${FRAMEWORK_BUILD}/libpsptest.a"
 
-make -C "${LAUNCHER_BUILD}" -f "${ROOT}/psptest/launcher/Makefile" VPATH="${ROOT}/psptest/launcher" INCDIR="${PSPTEST_SOURCE}" LIBDIR="${FRAMEWORK_BUILD}" all
+make -C "${LAUNCHER_BUILD}" -f "${ROOT}/psptest/launcher/Makefile" VPATH="${ROOT}/psptest/launcher" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PSPTEST_FRAMEWORK_LIBDIR="${FRAMEWORK_BUILD}" all
 cp "${LAUNCHER_BUILD}/EBOOT.PBP" "${PROGRAM_ROOT}/EBOOT.PBP"
 printf 'PSPTEST_MANIFEST\t1\n' > "${MANIFEST}"
-
-source_tree_state() {
-    local repository="$1"
-    git -C "${repository}" status --porcelain=v1 --untracked-files=all --ignored=matching -- psptest
-}
-
-PSPSDK_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/pspsdk")"
-PACKAGES_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/psp-packages")"
 
 build_namespace() {
     local source_root="$1"
@@ -52,6 +53,8 @@ build_namespace() {
     local -a prx_files
 
     [[ -d "${source_root}" ]] || return 0
+
+    mkdir -p "${PROGRAM_ROOT}/results/${namespace}"
 
     while IFS= read -r -d '' makefile; do
         source_dir="$(dirname "${makefile}")"
@@ -64,7 +67,7 @@ build_namespace() {
         install -m 644 "${EXPORTS}" "${local_exports}"
 
         echo "Building PSPTEST ${namespace}/${module} ..."
-        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" INCDIR="${PSPTEST_SOURCE}" LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all
+        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PSPTEST_FRAMEWORK_LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all
 
         mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
         if (( ${#prx_files[@]} != 1 )); then
@@ -81,11 +84,11 @@ build_namespace() {
 build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
 build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
 
-PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk")"
-PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages")"
+PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk" src/psptest psptest)"
+PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages" psptest)"
 
 if [[ "${PSPSDK_TEST_STATE_BEFORE}" != "${PSPSDK_TEST_STATE_AFTER}" ]]; then
-    echo "ERROR: PSPTEST build modified or generated files under components/pspsdk/psptest." >&2
+    echo "ERROR: PSPTEST build modified or generated files under PSPSDK PSPTEST source paths." >&2
     diff -u <(printf '%s\n' "${PSPSDK_TEST_STATE_BEFORE}") <(printf '%s\n' "${PSPSDK_TEST_STATE_AFTER}") || true
     exit 1
 fi
@@ -100,7 +103,7 @@ if ! grep -q '^TEST' "${MANIFEST}"; then
     exit 1
 fi
 
-tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP
+tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP/GAME/psptest
 
 echo "PSPTEST program tree:"
 echo "  ${PROGRAM_ROOT}"
