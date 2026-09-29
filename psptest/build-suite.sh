@@ -29,10 +29,18 @@ make -C "${LAUNCHER_BUILD}" -f "${ROOT}/psptest/launcher/Makefile" VPATH="${ROOT
 install -m 644 "${LAUNCHER_BUILD}/EBOOT.PBP" "${STAGE}/EBOOT.PBP"
 printf 'PSPTEST_MANIFEST\t1\n' > "${MANIFEST}"
 
+source_tree_state() {
+    local repository="$1"
+    git -C "${repository}" status --porcelain=v1 --untracked-files=all --ignored=matching -- psptest
+}
+
+PSPSDK_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/pspsdk")"
+PACKAGES_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/psp-packages")"
+
 build_namespace() {
     local source_root="$1"
     local namespace="$2"
-    local makefile source_dir module build_dir stage_dir target prx
+    local makefile source_dir module build_dir stage_dir target prx local_exports
 
     [[ -d "${source_root}" ]] || return 0
 
@@ -43,15 +51,17 @@ build_namespace() {
         stage_dir="${STAGE}/${namespace}/${module}"
 
         mkdir -p "${build_dir}" "${stage_dir}"
+        local_exports="${build_dir}/psptest.exp"
+        install -m 644 "${EXPORTS}" "${local_exports}"
 
-        target="$(make -s -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${EXPORTS}" --no-print-directory -pn | awk -F ' = ' '/^TARGET = / { print $2; exit }')"
+        target="$(make -s -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${local_exports}" --no-print-directory -pn | awk -F ' = ' '/^TARGET = / { print $2; exit }')"
         if [[ -z "${target}" ]]; then
             echo "ERROR: Unable to resolve TARGET from ${makefile}." >&2
             exit 1
         fi
 
         echo "Building PSPTEST ${namespace}/${module} ..."
-        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${EXPORTS}" all
+        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${local_exports}" all
 
         prx="${build_dir}/${target}.prx"
         if [[ ! -f "${prx}" ]]; then
@@ -66,6 +76,20 @@ build_namespace() {
 
 build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
 build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
+
+PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk")"
+PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages")"
+
+if [[ "${PSPSDK_TEST_STATE_BEFORE}" != "${PSPSDK_TEST_STATE_AFTER}" ]]; then
+    echo "ERROR: PSPTEST build modified or generated files under components/pspsdk/psptest." >&2
+    diff -u <(printf '%s\n' "${PSPSDK_TEST_STATE_BEFORE}") <(printf '%s\n' "${PSPSDK_TEST_STATE_AFTER}") || true
+    exit 1
+fi
+if [[ "${PACKAGES_TEST_STATE_BEFORE}" != "${PACKAGES_TEST_STATE_AFTER}" ]]; then
+    echo "ERROR: PSPTEST build modified or generated files under components/psp-packages/psptest." >&2
+    diff -u <(printf '%s\n' "${PACKAGES_TEST_STATE_BEFORE}") <(printf '%s\n' "${PACKAGES_TEST_STATE_AFTER}") || true
+    exit 1
+fi
 
 if ! grep -q '^TEST' "${MANIFEST}"; then
     echo "ERROR: No PSPTEST modules were discovered." >&2
