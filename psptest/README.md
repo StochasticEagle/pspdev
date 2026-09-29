@@ -11,11 +11,11 @@ Stage 6 discovers every `Makefile.test` under the PSPSDK and psp-packages `pspte
 
 All generated launcher, export, object, ELF, PRX, manifest, and archive output is under PSPDEV's Git-ignored `build/` directory. Stage 6 verifies that neither submodule's `psptest/` tree changes during the build.
 
-The runnable Memory Stick tree is:
+The PSPTEST program is built as a complete Memory Stick tree at:
 
     build/PSP/GAME/psptest/
 
-The archive is:
+The same program tree is archived as:
 
     build/psptest.tar.gz
 
