@@ -3,7 +3,7 @@
 
 set -e
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PACKAGES_SOURCE="${ROOT}/components/psp-packages"
 PSPSDK_SOURCE="${ROOT}/components/pspsdk"
 

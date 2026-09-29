@@ -3,7 +3,7 @@
 
 set -e
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BUILD_ROOT="${ROOT}/build"
 LOG_ROOT="${BUILD_ROOT}/_logs"
 source "${ROOT}/install-permissions.sh"

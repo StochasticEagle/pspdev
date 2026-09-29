@@ -2,7 +2,7 @@
 # psptoolchain.sh by fjtrujy
 set -e
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SOURCE="${ROOT}/components/psp-toolchain"
 
 if [ ! -f "${SOURCE}/toolchain.sh" ]; then

@@ -3,7 +3,7 @@
 
 set -e
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SOURCE="${ROOT}/components/psp-ebootsigner"
 BUILD="${SOURCE}/build"
 STAGE="${BUILD}/install"
@@ -17,8 +17,27 @@ fi
 
 PROC_NR=$(getconf _NPROCESSORS_ONLN)
 
+
+prepare_cmake_tree() {
+    local build="$1"
+    local source="$2"
+    local cache_source cache_build
+
+    [[ -f "${build}/CMakeCache.txt" ]] || return 0
+
+    cache_source="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "${build}/CMakeCache.txt" | tail -n 1)"
+    cache_build="$(sed -n 's/^CMAKE_CACHEFILE_DIR:INTERNAL=//p' "${build}/CMakeCache.txt" | tail -n 1)"
+
+    if [[ "${cache_source}" != "${source}" || "${cache_build}" != "${build}" ]]; then
+        echo "Refreshing relocated psp-ebootsigner CMake tree."
+        rm -rf "${build}"
+    fi
+}
+
+
 ## Re-run CMake in place so host/source changes refresh configuration while
 ## unchanged objects remain available for incremental rebuilds.
+prepare_cmake_tree "${BUILD}" "${SOURCE}"
 cmake -S "${SOURCE}" -B "${BUILD}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \

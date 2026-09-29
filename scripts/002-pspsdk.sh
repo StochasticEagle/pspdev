@@ -3,7 +3,7 @@
 
 set -e
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SOURCE="${ROOT}/components/pspsdk"
 
 if [ ! -f "${SOURCE}/build-and-install.sh" ]; then
