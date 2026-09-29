@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 BUILD_ROOT="${ROOT}/build/psptest"
+FRAMEWORK_BUILD="${BUILD_ROOT}/framework"
 MODULE_BUILD_ROOT="${BUILD_ROOT}/modules"
 LAUNCHER_BUILD="${BUILD_ROOT}/launcher"
+PSPTEST_SOURCE="${ROOT}/components/pspsdk/src/psptest"
 PROGRAM_ROOT="${ROOT}/build/PSP/GAME/psptest"
 MANIFEST="${PROGRAM_ROOT}/manifest.tsv"
 ARCHIVE="${ROOT}/build/psptest.tar.gz"
@@ -17,15 +19,20 @@ fi
 
 export PATH="${PSPDEV}/bin:${PATH}"
 
-if [[ ! -f "${PSPDEV}/psp/sdk/include/psptest.h" || ! -f "${PSPDEV}/psp/sdk/lib/libpsptest.a" ]]; then
-    echo "ERROR: Installed PSPSDK does not provide PSPTEST." >&2
+if [[ ! -f "${PSPTEST_SOURCE}/psptest.h" || ! -f "${PSPTEST_SOURCE}/psptest.c" ]]; then
+    echo "ERROR: PSPSDK PSPTEST framework source is unavailable." >&2
     exit 1
 fi
 
 rm -rf "${BUILD_ROOT}" "${PROGRAM_ROOT}"
-mkdir -p "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${PROGRAM_ROOT}/results"
+mkdir -p "${FRAMEWORK_BUILD}" "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${PROGRAM_ROOT}/results"
 
-make -C "${LAUNCHER_BUILD}" -f "${ROOT}/psptest/launcher/Makefile" VPATH="${ROOT}/psptest/launcher" all
+echo "Building PSPTEST framework ..."
+psp-gcc -O2 -G0 -Wall -Wextra -Werror -I"${PSPTEST_SOURCE}" -c "${PSPTEST_SOURCE}/psptest.c" -o "${FRAMEWORK_BUILD}/psptest.o"
+psp-gcc-ar rcs "${FRAMEWORK_BUILD}/libpsptest.a" "${FRAMEWORK_BUILD}/psptest.o"
+psp-gcc-ranlib "${FRAMEWORK_BUILD}/libpsptest.a"
+
+make -C "${LAUNCHER_BUILD}" -f "${ROOT}/psptest/launcher/Makefile" VPATH="${ROOT}/psptest/launcher" INCDIR="${PSPTEST_SOURCE}" LIBDIR="${FRAMEWORK_BUILD}" all
 cp "${LAUNCHER_BUILD}/EBOOT.PBP" "${PROGRAM_ROOT}/EBOOT.PBP"
 printf 'PSPTEST_MANIFEST\t1\n' > "${MANIFEST}"
 
@@ -56,7 +63,7 @@ build_namespace() {
         install -m 644 "${EXPORTS}" "${local_exports}"
 
         echo "Building PSPTEST ${namespace}/${module} ..."
-        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${local_exports}" all
+        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" INCDIR="${PSPTEST_SOURCE}" LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all
 
         mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
         if (( ${#prx_files[@]} != 1 )); then
