@@ -54,7 +54,7 @@ build_namespace() {
         local_exports="${build_dir}/psptest.exp"
         install -m 644 "${EXPORTS}" "${local_exports}"
 
-        target="$(make -s -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${local_exports}" --no-print-directory -pn | awk -F ' = ' '/^TARGET = / { print $2; exit }')"
+        target="$(make -s -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${local_exports}" --no-print-directory -pn | awk -F ' = ' '/^TARGET = / && !found { print $2; found = 1 }')"
         if [[ -z "${target}" ]]; then
             echo "ERROR: Unable to resolve TARGET from ${makefile}." >&2
             exit 1
