@@ -18,6 +18,7 @@ if [[ -z "${PSPDEV:-}" ]]; then
 fi
 
 export PATH="${PSPDEV}/bin:${PATH}"
+PSPSDK="$(psp-config --pspsdk-path)"
 
 if [[ ! -f "${PSPTEST_SOURCE}/psptest.h" || ! -f "${PSPTEST_SOURCE}/psptest.c" ]]; then
     echo "ERROR: PSPSDK PSPTEST framework source is unavailable." >&2
@@ -28,7 +29,7 @@ rm -rf "${BUILD_ROOT}" "${PROGRAM_ROOT}"
 mkdir -p "${FRAMEWORK_BUILD}" "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${PROGRAM_ROOT}/results"
 
 echo "Building PSPTEST framework ..."
-psp-gcc -O2 -G0 -Wall -Wextra -Werror -I"${PSPTEST_SOURCE}" -c "${PSPTEST_SOURCE}/psptest.c" -o "${FRAMEWORK_BUILD}/psptest.o"
+psp-gcc -O2 -G0 -Wall -Wextra -Werror -I"${PSPTEST_SOURCE}" -I"${PSPSDK}/include" -c "${PSPTEST_SOURCE}/psptest.c" -o "${FRAMEWORK_BUILD}/psptest.o"
 psp-gcc-ar rcs "${FRAMEWORK_BUILD}/libpsptest.a" "${FRAMEWORK_BUILD}/psptest.o"
 psp-gcc-ranlib "${FRAMEWORK_BUILD}/libpsptest.a"
 
