@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 BUILD_ROOT="${ROOT}/build/psptest"
 MODULE_BUILD_ROOT="${BUILD_ROOT}/modules"
 LAUNCHER_BUILD="${BUILD_ROOT}/launcher"
-STAGE="${ROOT}/build/PSP/GAME/psptest"
-MANIFEST="${STAGE}/manifest.tsv"
+PROGRAM_ROOT="${ROOT}/build/PSP/GAME/psptest"
+MANIFEST="${PROGRAM_ROOT}/manifest.tsv"
 ARCHIVE="${ROOT}/build/psptest.tar.gz"
 EXPORTS="${ROOT}/psptest/psptest.exp"
 
@@ -22,11 +22,11 @@ if [[ ! -f "${PSPDEV}/psp/sdk/include/psptest.h" || ! -f "${PSPDEV}/psp/sdk/lib/
     exit 1
 fi
 
-rm -rf "${BUILD_ROOT}" "${STAGE}"
-mkdir -p "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${STAGE}/results"
+rm -rf "${BUILD_ROOT}" "${PROGRAM_ROOT}"
+mkdir -p "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${PROGRAM_ROOT}/results"
 
 make -C "${LAUNCHER_BUILD}" -f "${ROOT}/psptest/launcher/Makefile" VPATH="${ROOT}/psptest/launcher" all
-install -m 644 "${LAUNCHER_BUILD}/EBOOT.PBP" "${STAGE}/EBOOT.PBP"
+cp "${LAUNCHER_BUILD}/EBOOT.PBP" "${PROGRAM_ROOT}/EBOOT.PBP"
 printf 'PSPTEST_MANIFEST\t1\n' > "${MANIFEST}"
 
 source_tree_state() {
@@ -40,7 +40,8 @@ PACKAGES_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/psp-packages
 build_namespace() {
     local source_root="$1"
     local namespace="$2"
-    local makefile source_dir module build_dir stage_dir target prx local_exports
+    local makefile source_dir module build_dir program_module_dir prx local_exports
+    local -a prx_files
 
     [[ -d "${source_root}" ]] || return 0
 
@@ -48,28 +49,23 @@ build_namespace() {
         source_dir="$(dirname "${makefile}")"
         module="$(basename "${source_dir}")"
         build_dir="${MODULE_BUILD_ROOT}/${namespace}/${module}"
-        stage_dir="${STAGE}/${namespace}/${module}"
+        program_module_dir="${PROGRAM_ROOT}/${namespace}/${module}"
 
-        mkdir -p "${build_dir}" "${stage_dir}"
+        mkdir -p "${build_dir}" "${program_module_dir}"
         local_exports="${build_dir}/psptest.exp"
         install -m 644 "${EXPORTS}" "${local_exports}"
-
-        target="$(make -s -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${local_exports}" --no-print-directory -pn | awk -F ' = ' '/^TARGET = / && !found { print $2; found = 1 }')"
-        if [[ -z "${target}" ]]; then
-            echo "ERROR: Unable to resolve TARGET from ${makefile}." >&2
-            exit 1
-        fi
 
         echo "Building PSPTEST ${namespace}/${module} ..."
         make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PRX_EXPORTS="${local_exports}" all
 
-        prx="${build_dir}/${target}.prx"
-        if [[ ! -f "${prx}" ]]; then
-            echo "ERROR: PSPTEST ${namespace}/${module} did not produce ${target}.prx." >&2
+        mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
+        if (( ${#prx_files[@]} != 1 )); then
+            echo "ERROR: PSPTEST ${namespace}/${module} produced ${#prx_files[@]} PRX files; expected exactly one module PRX." >&2
             exit 1
         fi
+        prx="${prx_files[0]}"
 
-        install -m 644 "${prx}" "${stage_dir}/test.prx"
+        cp "${prx}" "${program_module_dir}/test.prx"
         printf 'TEST\t%s/%s\t%s/%s/test.prx\tmodule\n' "${namespace}" "${module}" "${namespace}" "${module}" >> "${MANIFEST}"
     done < <(find "${source_root}" -mindepth 2 -maxdepth 2 -type f -name Makefile.test -print0 | sort -z)
 }
@@ -98,7 +94,7 @@ fi
 
 tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP
 
-echo "PSPTEST bundle:"
-echo "  ${STAGE}"
+echo "PSPTEST program tree:"
+echo "  ${PROGRAM_ROOT}"
 echo "Archive:"
 echo "  ${ARCHIVE}"
