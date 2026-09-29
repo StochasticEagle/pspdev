@@ -1,528 +1,690 @@
+#include <kubridge.h>
 #include <pspctrl.h>
 #include <pspdebug.h>
 #include <pspiofilemgr.h>
 #include <pspkernel.h>
-#include <psploadexec.h>
-#include <pspsysmem.h>
+#include <pspmodulemgr.h>
+#include <pspthreadman.h>
+#include <psptest.h>
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-PSP_MODULE_INFO("PSPDEV Test Suite", 0, 1, 0);
+PSP_MODULE_INFO("PSPDEV PSPTEST Launcher", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
+PSP_HEAP_SIZE_KB(1024);
 
-#define MAX_TESTS 256
-#define MAX_PATH_LENGTH 512
-#define MAX_LINE_LENGTH 1024
-#define PAGE_SIZE 20
+#define COLOR_WHITE 0xFFFFFFFFu
+#define COLOR_AMBER 0xFF00BFFFu
+#define COLOR_GRAY  0xFFD3D3D3u
+#define COLOR_RED   0xFF0000FFu
+#define COLOR_GREEN 0xFF00FF00u
+
+#define MAX_TESTS 128
+#define PAGE_ROWS 20
+
+typedef enum TestStatus {
+    TEST_PENDING = 0,
+    TEST_PASS,
+    TEST_FAIL,
+    TEST_WARNING
+} TestStatus;
 
 typedef struct TestEntry {
-    char scope[32];
-    char module[96];
-    char title[160];
-    char path[256];
-    int selected;
+    char module[64];
+    char relative_path[128];
+    char kind[16];
+    TestStatus status;
+    unsigned int passed;
+    unsigned int failed;
+    unsigned int skipped;
+    unsigned int total;
 } TestEntry;
 
 typedef struct RunState {
-    int count;
-    int position;
-    int inflight;
-    int indices[MAX_TESTS];
+    int running;
+    int index;
+    char module[64];
+    char mode[16];
 } RunState;
 
 static TestEntry tests[MAX_TESTS];
-static int test_count = 0;
-static char base_path[MAX_PATH_LENGTH];
-static char launcher_path[MAX_PATH_LENGTH];
-static char results_path[MAX_PATH_LENGTH];
-static char state_path[MAX_PATH_LENGTH];
-static char aggregate_path[MAX_PATH_LENGTH];
-static char failures_path[MAX_PATH_LENGTH];
-static char build_info_path[MAX_PATH_LENGTH];
+static int test_count;
+static char root_path[256];
+static char interrupted_module[64];
+static char last_launch_stage[32];
+static int last_launch_error;
 
-static void copy_string(char *destination, size_t destination_size, const char *source) {
-    if (destination_size == 0) {
-        return;
-    }
-    if (source == NULL) {
-        destination[0] = '\0';
-        return;
-    }
-    snprintf(destination, destination_size, "%s", source);
+static void set_color(unsigned int color) {
+    pspDebugScreenSetTextColor(color);
 }
 
-static void make_path(char *destination, size_t destination_size, const char *left, const char *right) {
-    snprintf(destination, destination_size, "%s/%s", left, right);
+static void print_header(const char *title) {
+    pspDebugScreenClear();
+    set_color(COLOR_AMBER);
+    pspDebugScreenPrintf("PSPTEST  %s\n", title);
+    pspDebugScreenPrintf("------------------------------------------------------------\n");
+    set_color(COLOR_WHITE);
 }
 
-static const char *argument_value(int argc, char **argv, const char *name) {
-    int index;
-    size_t length = strlen(name);
+static void print_note(const char *text) {
+    set_color(COLOR_GRAY);
+    pspDebugScreenPrintf("%s\n", text);
+    set_color(COLOR_WHITE);
+}
 
-    for (index = 1; index < argc; index++) {
-        if (strncmp(argv[index], name, length) == 0 && argv[index][length] == '=' && argv[index][length + 1] != '\0') {
-            return argv[index] + length + 1;
+static const char *status_name(TestStatus status) {
+    switch (status) {
+        case TEST_PASS: return "PASS";
+        case TEST_FAIL: return "FAIL";
+        case TEST_WARNING: return "WARN";
+        default: return "PENDING";
+    }
+}
+
+static unsigned int status_color(TestStatus status) {
+    switch (status) {
+        case TEST_PASS: return COLOR_GREEN;
+        case TEST_FAIL: return COLOR_RED;
+        case TEST_WARNING: return COLOR_AMBER;
+        default: return COLOR_WHITE;
+    }
+}
+
+static int make_path(char *destination, size_t destination_size, const char *suffix) {
+    size_t root_length = strlen(root_path);
+    size_t suffix_length = strlen(suffix);
+
+    if (root_length + 1 + suffix_length + 1 > destination_size) {
+        if (destination_size > 0) {
+            destination[0] = '\0';
         }
-        if (strcmp(argv[index], name) == 0 && index + 1 < argc) {
-            return argv[index + 1];
-        }
+        return -1;
     }
-    return NULL;
+
+    memcpy(destination, root_path, root_length);
+    destination[root_length] = '/';
+    memcpy(destination + root_length + 1, suffix, suffix_length + 1);
+    return 0;
 }
 
-static void initialize_paths(const char *argv0) {
-    char *slash;
+static void derive_root_path(int argc, char **argv) {
+    const char *fallback = "ms0:/PSP/GAME/psptest";
+    size_t length;
 
-    copy_string(launcher_path, sizeof(launcher_path), argv0);
-    copy_string(base_path, sizeof(base_path), argv0);
-    slash = strrchr(base_path, '/');
-    if (slash != NULL) {
-        *slash = '\0';
+    if (argc <= 0 || argv == NULL || argv[0] == NULL || argv[0][0] == '\0') {
+        snprintf(root_path, sizeof(root_path), "%s", fallback);
     } else {
-        copy_string(base_path, sizeof(base_path), ".");
+        snprintf(root_path, sizeof(root_path), "%s", argv[0]);
+        length = strlen(root_path);
+        while (length > 0 && root_path[length - 1] != '/' && root_path[length - 1] != ':') {
+            root_path[--length] = '\0';
+        }
+        if (length > 0 && root_path[length - 1] == '/') {
+            root_path[length - 1] = '\0';
+        }
+        if (root_path[0] == '\0') {
+            snprintf(root_path, sizeof(root_path), "%s", fallback);
+        }
     }
+}
 
-    make_path(results_path, sizeof(results_path), base_path, "results");
-    make_path(state_path, sizeof(state_path), results_path, "run.state");
-    make_path(aggregate_path, sizeof(aggregate_path), results_path, "latest.log");
-    make_path(failures_path, sizeof(failures_path), results_path, "failures.md");
-    make_path(build_info_path, sizeof(build_info_path), base_path, "build-info.txt");
-    sceIoMkdir(results_path, 0777);
+static unsigned int read_press(void) {
+    SceCtrlData pad;
+
+    do {
+        sceCtrlReadBufferPositive(&pad, 1);
+        sceKernelDelayThread(10000);
+    } while (pad.Buttons != 0);
+
+    do {
+        sceCtrlReadBufferPositive(&pad, 1);
+        sceKernelDelayThread(10000);
+    } while (pad.Buttons == 0);
+
+    return pad.Buttons;
 }
 
 static int load_manifest(void) {
-    char manifest_path[MAX_PATH_LENGTH];
-    char line[MAX_LINE_LENGTH];
+    char path[320];
+    char line[320];
     FILE *file;
 
-    make_path(manifest_path, sizeof(manifest_path), base_path, "tests.manifest");
-    file = fopen(manifest_path, "r");
+    if (make_path(path, sizeof(path), "manifest.tsv") != 0) {
+        return -1;
+    }
+    file = fopen(path, "r");
     if (file == NULL) {
         return -1;
     }
 
     test_count = 0;
-    while (test_count < MAX_TESTS && fgets(line, sizeof(line), file) != NULL) {
-        char *scope;
-        char *module;
-        char *title;
-        char *path;
+    while (fgets(line, sizeof(line), file) != NULL && test_count < MAX_TESTS) {
+        TestEntry *entry;
 
-        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
+        if (strncmp(line, "TEST\t", 5) != 0) {
             continue;
         }
 
-        scope = strtok(line, "\t\r\n");
-        module = strtok(NULL, "\t\r\n");
-        title = strtok(NULL, "\t\r\n");
-        path = strtok(NULL, "\t\r\n");
-        if (scope == NULL || module == NULL || title == NULL || path == NULL) {
-            fclose(file);
-            return -2;
+        entry = &tests[test_count];
+        memset(entry, 0, sizeof(*entry));
+        if (sscanf(line, "TEST\t%63[^\t]\t%127[^\t]\t%15[^\r\n]", entry->module, entry->relative_path, entry->kind) == 3) {
+            test_count++;
         }
-
-        copy_string(tests[test_count].scope, sizeof(tests[test_count].scope), scope);
-        copy_string(tests[test_count].module, sizeof(tests[test_count].module), module);
-        copy_string(tests[test_count].title, sizeof(tests[test_count].title), title);
-        copy_string(tests[test_count].path, sizeof(tests[test_count].path), path);
-        tests[test_count].selected = 1;
-        test_count++;
     }
 
     fclose(file);
     return test_count;
 }
 
-static int selected_count(void) {
-    int index;
-    int count = 0;
-
-    for (index = 0; index < test_count; index++) {
-        if (tests[index].selected) {
-            count++;
-        }
-    }
-    return count;
-}
-
-static int save_state(const RunState *state) {
+static int load_result(TestEntry *entry) {
+    char suffix[160];
+    char path[320];
+    char line[320];
     FILE *file;
-    int index;
 
-    file = fopen(state_path, "w");
-    if (file == NULL) {
+    snprintf(suffix, sizeof(suffix), "results/%s.log", entry->module);
+    if (make_path(path, sizeof(path), suffix) != 0) {
+        entry->status = TEST_WARNING;
         return -1;
     }
-
-    fprintf(file, "PSPTEST_STATE 1 %d %d %d\n", state->count, state->position, state->inflight);
-    for (index = 0; index < state->count; index++) {
-        fprintf(file, "%d\n", state->indices[index]);
-    }
-    fclose(file);
-    return 0;
-}
-
-static int load_state(RunState *state) {
-    FILE *file;
-    int version;
-    int index;
-
-    file = fopen(state_path, "r");
+    file = fopen(path, "r");
     if (file == NULL) {
+        entry->status = TEST_PENDING;
         return 0;
     }
 
-    if (fscanf(file, "PSPTEST_STATE %d %d %d %d", &version, &state->count, &state->position, &state->inflight) != 4 || version != 1 || state->count < 0 || state->count > MAX_TESTS || state->position < 0 || state->position > state->count) {
-        fclose(file);
-        return -1;
-    }
-
-    for (index = 0; index < state->count; index++) {
-        if (fscanf(file, "%d", &state->indices[index]) != 1 || state->indices[index] < 0 || state->indices[index] >= test_count) {
-            fclose(file);
-            return -1;
-        }
-    }
-
-    fclose(file);
-    return 1;
-}
-
-static void append_build_info(FILE *file) {
-    FILE *source;
-    char line[MAX_LINE_LENGTH];
-
-    source = fopen(build_info_path, "r");
-    if (source == NULL) {
-        fprintf(file, "build-info unavailable\n");
-        return;
-    }
-
-    while (fgets(line, sizeof(line), source) != NULL) {
-        fputs(line, file);
-    }
-    fclose(source);
-}
-
-static int begin_reports(void) {
-    FILE *aggregate;
-    FILE *failures;
-
-    aggregate = fopen(aggregate_path, "w");
-    if (aggregate == NULL) {
-        return -1;
-    }
-
-    fprintf(aggregate, "PSPDEV_TEST_RUN\n");
-    fprintf(aggregate, "firmware_devkit=0x%08X\n", (unsigned int)sceKernelDevkitVersion());
-    append_build_info(aggregate);
-    fclose(aggregate);
-
-    failures = fopen(failures_path, "w");
-    if (failures == NULL) {
-        return -1;
-    }
-
-    fprintf(failures, "# PSPDEV Test Failure Report\n\n");
-    fprintf(failures, "Firmware devkit version: 0x%08X\n\n", (unsigned int)sceKernelDevkitVersion());
-    fprintf(failures, "## Build information\n\n---\n");
-    append_build_info(failures);
-    fprintf(failures, "---\n");
-    fclose(failures);
-    return 0;
-}
-
-static void result_file_path(char *destination, size_t destination_size, int test_index) {
-    snprintf(destination, destination_size, "%s/%s-%s.log", results_path, tests[test_index].scope, tests[test_index].module);
-}
-
-static int result_has_failure(const char *path) {
-    FILE *file;
-    char line[MAX_LINE_LENGTH];
-
-    file = fopen(path, "r");
-    if (file == NULL) {
-        return 1;
-    }
-
+    entry->status = TEST_WARNING;
     while (fgets(line, sizeof(line), file) != NULL) {
-        if (strstr(line, "\tFAIL\t") != NULL || strstr(line, "\tINTERACTIVE_FAIL\t") != NULL || strncmp(line, "RETURN\tFAIL\t", 12) == 0) {
+        unsigned int pass;
+        unsigned int fail;
+        unsigned int skip;
+        unsigned int total;
+
+        if (sscanf(line, "SUMMARY\tpass=%u\tfail=%u\tskip=%u\ttotal=%u", &pass, &fail, &skip, &total) == 4) {
+            entry->passed = pass;
+            entry->failed = fail;
+            entry->skipped = skip;
+            entry->total = total;
+            if (fail != 0) {
+                entry->status = TEST_FAIL;
+            } else if (skip != 0) {
+                entry->status = TEST_WARNING;
+            } else {
+                entry->status = TEST_PASS;
+            }
             fclose(file);
             return 1;
         }
     }
 
     fclose(file);
-    return 0;
+    return -1;
 }
 
-static void append_result(int test_index, const char *path) {
-    FILE *source;
-    FILE *aggregate;
-    FILE *failures;
-    char line[MAX_LINE_LENGTH];
-    int failed = result_has_failure(path);
+static void load_results(void) {
+    int index;
 
-    source = fopen(path, "r");
-    aggregate = fopen(aggregate_path, "a");
-    if (aggregate != NULL) {
-        fprintf(aggregate, "\nTEST\t%s/%s\t%s\n", tests[test_index].scope, tests[test_index].module, path);
-        if (source != NULL) {
-            while (fgets(line, sizeof(line), source) != NULL) {
-                fputs(line, aggregate);
-            }
-            rewind(source);
-        } else {
-            fprintf(aggregate, "CASE\tFAIL\tinfrastructure\tassertions=0\tmessage=result file unavailable\n");
+    for (index = 0; index < test_count; index++) {
+        load_result(&tests[index]);
+        if (interrupted_module[0] != '\0' && strcmp(tests[index].module, interrupted_module) == 0 && tests[index].status == TEST_PENDING) {
+            tests[index].status = TEST_WARNING;
         }
-        fclose(aggregate);
-    }
-
-    if (failed) {
-        failures = fopen(failures_path, "a");
-        if (failures != NULL) {
-            fprintf(failures, "\n## %s / %s\n\n", tests[test_index].scope, tests[test_index].module);
-            fprintf(failures, "Test EBOOT: %s\n\n---\n", tests[test_index].path);
-            if (source != NULL) {
-                while (fgets(line, sizeof(line), source) != NULL) {
-                    fputs(line, failures);
-                }
-            } else {
-                fprintf(failures, "Result file unavailable\n");
-            }
-            fprintf(failures, "---\n");
-            fclose(failures);
-        }
-    }
-
-    if (source != NULL) {
-        fclose(source);
     }
 }
 
-static void write_infrastructure_failure(int test_index, const char *message, int code) {
-    char path[MAX_PATH_LENGTH];
+static int write_state(const char *mode, int index) {
+    char temp_path[320];
+    char state_path[320];
     FILE *file;
 
-    result_file_path(path, sizeof(path), test_index);
-    file = fopen(path, "w");
-    if (file != NULL) {
-        fprintf(file, "PSPTEST\t1\n");
-        fprintf(file, "SUITE\t%s/%s\n", tests[test_index].scope, tests[test_index].module);
-        fprintf(file, "CASE\tFAIL\tinfrastructure\tassertions=0\tmessage=%s code=%d\n", message, code);
-        fprintf(file, "SUMMARY\tpass=0\tfail=1\tskip=0\ttotal=1\n");
-        fclose(file);
-    }
-    append_result(test_index, path);
-}
-
-static int launch_test(int test_index) {
-    char test_path[MAX_PATH_LENGTH];
-    char output_path[MAX_PATH_LENGTH];
-    char arguments[1536];
-    SceKernelLoadExecParam parameters;
-    int length;
-
-    make_path(test_path, sizeof(test_path), base_path, tests[test_index].path);
-    result_file_path(output_path, sizeof(output_path), test_index);
-    remove(output_path);
-
-    length = snprintf(arguments, sizeof(arguments), "%s --psptest-output=%s --psptest-return=%s", test_path, output_path, launcher_path);
-    if (length < 0 || (size_t)length >= sizeof(arguments)) {
+    if (make_path(temp_path, sizeof(temp_path), "state.tmp") != 0 ||
+        make_path(state_path, sizeof(state_path), "state.tsv") != 0) {
         return -1;
     }
 
-    memset(&parameters, 0, sizeof(parameters));
-    parameters.size = sizeof(parameters);
-    parameters.args = (SceSize)(length + 1);
-    parameters.argp = arguments;
-    parameters.key = NULL;
-    return sceKernelLoadExec(test_path, &parameters);
-}
+    file = fopen(temp_path, "w");
+    if (file == NULL) {
+        return -1;
+    }
 
-static int run_next(RunState *state) {
-    while (state->position < state->count) {
-        int test_index = state->indices[state->position];
-        int status;
+    if (index >= 0 && index < test_count) {
+        fprintf(file, "RUNNING\t%s\t%s\t%d\n", tests[index].module, mode, index);
+    } else {
+        fprintf(file, "IDLE\n");
+    }
 
-        state->inflight = 1;
-        if (save_state(state) < 0) {
-            return -1;
-        }
-
-        status = launch_test(test_index);
-        write_infrastructure_failure(test_index, "sceKernelLoadExec returned without starting test", status);
-
-        state->inflight = 0;
-        state->position++;
-        if (save_state(state) < 0) {
-            return -1;
-        }
+    if (fflush(file) != 0 || fclose(file) != 0) {
+        remove(temp_path);
+        return -1;
     }
 
     remove(state_path);
+    if (rename(temp_path, state_path) != 0) {
+        remove(temp_path);
+        return -1;
+    }
+
     return 0;
 }
 
-static int start_run(void) {
+static RunState read_state(void) {
+    char path[320];
+    char line[256];
+    FILE *file;
     RunState state;
-    int index;
 
     memset(&state, 0, sizeof(state));
-    for (index = 0; index < test_count; index++) {
-        if (tests[index].selected) {
-            state.indices[state.count++] = index;
-        }
+    state.index = -1;
+
+    if (make_path(path, sizeof(path), "state.tsv") != 0) {
+        return state;
+    }
+    file = fopen(path, "r");
+    if (file == NULL) {
+        return state;
     }
 
-    if (state.count == 0) {
-        return -1;
+    if (fgets(line, sizeof(line), file) != NULL &&
+        sscanf(line, "RUNNING\t%63[^\t]\t%15[^\t]\t%d", state.module, state.mode, &state.index) == 3) {
+        state.running = 1;
     }
 
-    if (begin_reports() < 0 || save_state(&state) < 0) {
-        return -1;
-    }
-
-    return run_next(&state);
+    fclose(file);
+    return state;
 }
 
-static int resume_run(const char *returned_result) {
-    RunState state;
-    int loaded = load_state(&state);
+static int result_path_for(int index, char *path, size_t path_size) {
+    char suffix[160];
+    int length = snprintf(suffix, sizeof(suffix), "results/%s.log", tests[index].module);
 
-    if (loaded <= 0) {
-        return loaded;
+    if (length < 0 || (size_t)length >= sizeof(suffix)) {
+        if (path_size > 0) {
+            path[0] = '\0';
+        }
+        return -1;
     }
 
-    if (state.position >= state.count) {
-        remove(state_path);
+    return make_path(path, path_size, suffix);
+}
+
+typedef struct SupervisorRequest {
+    int index;
+    int result;
+    const char *failure_stage;
+} SupervisorRequest;
+
+static SupervisorRequest supervisor_request;
+
+static int supervisor_thread(SceSize args, void *argp) {
+    SupervisorRequest *request = &supervisor_request;
+
+    (void)args;
+    (void)argp;
+    PspTestModuleControl control;
+    char module_args[512];
+    char child_path[384];
+    char result_path[320];
+    SceUID module_id = -1;
+    SceUID completion_sema = -1;
+    int module_status = 0;
+    int result = -1;
+
+    if (request->index < 0 || request->index >= test_count) {
+        request->failure_stage = "request";
+        request->result = -1;
         return 0;
     }
 
-    if (state.inflight) {
-        int test_index = state.indices[state.position];
+    if (make_path(child_path, sizeof(child_path), tests[request->index].relative_path) != 0 ||
+        result_path_for(request->index, result_path, sizeof(result_path)) != 0) {
+        request->failure_stage = "path";
+        request->result = -2;
+        return 0;
+    }
 
-        if (returned_result != NULL) {
-            append_result(test_index, returned_result);
-        } else {
-            write_infrastructure_failure(test_index, "selected test did not return to PSPDEV Test Suite", -1);
+    remove(result_path);
+    completion_sema = sceKernelCreateSema("psptest-complete", 0, 0, 1, NULL);
+    if (completion_sema < 0) {
+        request->failure_stage = "semaphore";
+        request->result = completion_sema;
+        return 0;
+    }
+
+    memset(&control, 0, sizeof(control));
+    control.size = sizeof(control);
+    control.version = PSPTEST_MODULE_ABI_VERSION;
+    control.completion_sema = completion_sema;
+    control.test_thread = -1;
+    control.state = PSPTEST_MODULE_IDLE;
+    control.result = 2;
+    snprintf(control.output_path, sizeof(control.output_path), "%s", result_path);
+
+    {
+        int first_length = snprintf(module_args, sizeof(module_args), "%s", child_path);
+        int second_length;
+        if (first_length < 0 || (size_t)first_length + 1 >= sizeof(module_args)) {
+            request->failure_stage = "arguments";
+            result = -2;
+            goto done;
         }
-
-        state.inflight = 0;
-        state.position++;
-        if (save_state(&state) < 0) {
-            return -1;
+        second_length = snprintf(module_args + first_length + 1, sizeof(module_args) - (size_t)first_length - 1, "--psptest-control=0x%08X", (unsigned int)(uintptr_t)&control);
+        if (second_length < 0 || (size_t)first_length + (size_t)second_length + 2 > sizeof(module_args)) {
+            request->failure_stage = "arguments";
+            result = -2;
+            goto done;
         }
     }
 
-    return run_next(&state);
+    module_id = kuKernelLoadModule(child_path, 0, NULL);
+    if (module_id < 0) {
+        request->failure_stage = "load";
+        result = module_id;
+        goto done;
+    }
+
+    {
+        size_t first_length = strlen(module_args);
+        size_t second_length = strlen(module_args + first_length + 1);
+        SceSize module_args_size = (SceSize)(first_length + second_length + 2);
+        result = sceKernelStartModule(module_id, module_args_size, module_args, &module_status, NULL);
+    }
+    if (result < 0) {
+        request->failure_stage = "start";
+        goto done;
+    }
+
+    result = sceKernelWaitSema(completion_sema, 1, NULL);
+    if (result < 0) {
+        request->failure_stage = "wait";
+        goto done;
+    }
+
+    result = control.state == PSPTEST_MODULE_COMPLETE ? control.result : (control.result < 0 ? control.result : -1);
+    if (control.state != PSPTEST_MODULE_COMPLETE) {
+        request->failure_stage = "test";
+    }
+    if (control.test_thread > 0) {
+        sceKernelWaitThreadEnd(control.test_thread, NULL);
+    }
+
+done:
+    if (module_id >= 0) {
+        sceKernelStopModule(module_id, 0, NULL, &module_status, NULL);
+        sceKernelUnloadModule(module_id);
+    }
+    if (completion_sema >= 0) {
+        sceKernelDeleteSema(completion_sema);
+    }
+
+    request->result = result;
+    return 0;
 }
 
-static void select_all(int selected) {
+static int launch_test(int index, const char *mode) {
+    SupervisorRequest *request = &supervisor_request;
+    SceUID supervisor;
+    int result;
+
+    if (index < 0 || index >= test_count) {
+        return -1;
+    }
+
+    if (write_state(mode, index) != 0) {
+        return -2;
+    }
+
+    print_header("Running");
+    pspDebugScreenPrintf("%s\n\n", tests[index].module);
+    print_note("The test module is running on a dedicated test thread.");
+
+    last_launch_stage[0] = '\0';
+    last_launch_error = 0;
+    request->index = index;
+    request->result = -1;
+    request->failure_stage = NULL;
+
+    supervisor = sceKernelCreateThread("psptest-supervisor", supervisor_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL);
+    if (supervisor < 0) {
+        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-create");
+        last_launch_error = supervisor;
+        write_state("idle", -1);
+        return supervisor;
+    }
+
+    result = sceKernelStartThread(supervisor, 0, NULL);
+    if (result < 0) {
+        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-start");
+        last_launch_error = result;
+    } else {
+        result = sceKernelWaitThreadEnd(supervisor, NULL);
+        if (result < 0 && request->failure_stage == NULL && request->result == -1) {
+            snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor");
+            last_launch_error = result;
+        }
+    }
+    sceKernelDeleteThread(supervisor);
+    write_state("idle", -1);
+
+    if (request->failure_stage == NULL && request->result == -1 && result < 0) {
+        return result;
+    }
+    if (request->result < 0) {
+        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", request->failure_stage != NULL ? request->failure_stage : "module");
+        last_launch_error = request->result;
+    }
+    return request->result;
+}
+
+static void count_statuses(int *passed, int *failed, int *warnings, int *pending) {
     int index;
+
+    *passed = 0;
+    *failed = 0;
+    *warnings = 0;
+    *pending = 0;
+
     for (index = 0; index < test_count; index++) {
-        tests[index].selected = selected;
+        switch (tests[index].status) {
+            case TEST_PASS: (*passed)++; break;
+            case TEST_FAIL: (*failed)++; break;
+            case TEST_WARNING: (*warnings)++; break;
+            default: (*pending)++; break;
+        }
     }
 }
 
-static void draw_menu(int cursor, const char *message) {
-    int page_start = (cursor / PAGE_SIZE) * PAGE_SIZE;
-    int page_end = page_start + PAGE_SIZE;
-    int index;
+static void show_summary(void) {
+    int passed;
+    int failed;
+    int warnings;
+    int pending;
 
-    if (page_end > test_count) {
-        page_end = test_count;
+    count_statuses(&passed, &failed, &warnings, &pending);
+    print_header("Results");
+
+    set_color(COLOR_WHITE);
+    pspDebugScreenPrintf("Tests:    %d\n\n", test_count);
+
+    set_color(COLOR_GREEN);
+    pspDebugScreenPrintf("PASS      %d\n", passed);
+    set_color(COLOR_RED);
+    pspDebugScreenPrintf("FAIL      %d\n", failed);
+    set_color(COLOR_AMBER);
+    pspDebugScreenPrintf("WARN      %d\n", warnings);
+    set_color(COLOR_WHITE);
+    pspDebugScreenPrintf("PENDING   %d\n\n", pending);
+
+    if (interrupted_module[0] != '\0') {
+        set_color(COLOR_AMBER);
+        pspDebugScreenPrintf("Interrupted: %s\n\n", interrupted_module);
     }
 
-    pspDebugScreenClear();
-    pspDebugScreenPrintf("PSPDEV Test Suite\n");
-    pspDebugScreenPrintf("Selected tests always run; there are no hardware gates.\n\n");
-    pspDebugScreenPrintf("Cross: run selected  Square: toggle  Triangle: all  Circle: none\n");
-    pspDebugScreenPrintf("Up/Down: move  Start: exit\n\n");
-
-    for (index = page_start; index < page_end; index++) {
-        pspDebugScreenPrintf("%c [%c] %-10s %s\n", index == cursor ? '>' : ' ', tests[index].selected ? 'x' : ' ', tests[index].scope, tests[index].title);
-    }
-
-    pspDebugScreenPrintf("\nSelected: %d / %d\n", selected_count(), test_count);
-    if (message != NULL && message[0] != '\0') {
-        pspDebugScreenPrintf("%s\n", message);
+    print_note("WARN includes skipped, incomplete, or interrupted tests.");
+    print_note("Press O to return.");
+    while ((read_press() & PSP_CTRL_CIRCLE) == 0) {
     }
 }
 
-static void run_menu(void) {
-    SceCtrlData pad;
-    unsigned int previous = 0;
-    int cursor = 0;
-    char message[256] = "";
+static void browse_tests(void) {
+    int selected = 0;
 
-    sceCtrlSetSamplingCycle(0);
-    sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
+    if (test_count == 0) {
+        return;
+    }
 
-    while (1) {
-        unsigned int pressed;
+    for (;;) {
+        int first = (selected / PAGE_ROWS) * PAGE_ROWS;
+        int last = first + PAGE_ROWS;
+        int index;
+        unsigned int buttons;
 
-        draw_menu(cursor, message);
-        sceCtrlReadBufferPositive(&pad, 1);
-        pressed = pad.Buttons & ~previous;
-        previous = pad.Buttons;
-
-        if ((pressed & PSP_CTRL_UP) != 0u && cursor > 0) {
-            cursor--;
-            message[0] = '\0';
-        } else if ((pressed & PSP_CTRL_DOWN) != 0u && cursor + 1 < test_count) {
-            cursor++;
-            message[0] = '\0';
-        } else if ((pressed & PSP_CTRL_SQUARE) != 0u && test_count > 0) {
-            tests[cursor].selected = !tests[cursor].selected;
-            message[0] = '\0';
-        } else if ((pressed & PSP_CTRL_TRIANGLE) != 0u) {
-            select_all(1);
-            copy_string(message, sizeof(message), "All tests selected.");
-        } else if ((pressed & PSP_CTRL_CIRCLE) != 0u) {
-            select_all(0);
-            copy_string(message, sizeof(message), "Selection cleared.");
-        } else if ((pressed & PSP_CTRL_CROSS) != 0u) {
-            if (selected_count() == 0) {
-                copy_string(message, sizeof(message), "No tests selected.");
-            } else if (start_run() < 0) {
-                copy_string(message, sizeof(message), "Unable to start test run.");
-            }
-        } else if ((pressed & PSP_CTRL_START) != 0u) {
-            sceKernelExitGame();
+        if (last > test_count) {
+            last = test_count;
         }
 
-        sceKernelDelayThread(50000);
+        print_header("Browse");
+        for (index = first; index < last; index++) {
+            set_color(index == selected ? COLOR_AMBER : COLOR_WHITE);
+            pspDebugScreenPrintf("%c %-30s ", index == selected ? '>' : ' ', tests[index].module);
+            set_color(status_color(tests[index].status));
+            pspDebugScreenPrintf("%s\n", status_name(tests[index].status));
+        }
+
+        pspDebugScreenPrintf("\n");
+        print_note("UP/DOWN select   X run   O back");
+
+        buttons = read_press();
+        if ((buttons & PSP_CTRL_UP) != 0) {
+            selected = selected == 0 ? test_count - 1 : selected - 1;
+        } else if ((buttons & PSP_CTRL_DOWN) != 0) {
+            selected = selected + 1 == test_count ? 0 : selected + 1;
+        } else if ((buttons & PSP_CTRL_CROSS) != 0) {
+            int result = launch_test(selected, "single");
+            if (result < 0) {
+                tests[selected].status = TEST_WARNING;
+                print_header("Warning");
+                set_color(COLOR_AMBER);
+                pspDebugScreenPrintf("Could not launch %s\n", tests[selected].module);
+                pspDebugScreenPrintf("Stage: %s\n", last_launch_stage[0] != '\0' ? last_launch_stage : "unknown");
+                pspDebugScreenPrintf("Error: 0x%08X (%d)\n", (unsigned int)last_launch_error, last_launch_error);
+                print_note("Press O to return.");
+                while ((read_press() & PSP_CTRL_CIRCLE) == 0) {
+                }
+            }
+            return;
+        } else if ((buttons & PSP_CTRL_CIRCLE) != 0) {
+            return;
+        }
     }
 }
 
 int main(int argc, char **argv) {
-    const char *returned_result;
     RunState state;
-    int state_status;
 
     pspDebugScreenInit();
-    initialize_paths(argv[0]);
+    sceCtrlSetSamplingCycle(0);
+    sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
+
+    derive_root_path(argc, argv);
 
     if (load_manifest() < 0) {
-        pspDebugScreenPrintf("Unable to load tests.manifest.\n");
-        sceKernelDelayThread(5000000);
+        print_header("Error");
+        set_color(COLOR_RED);
+        pspDebugScreenPrintf("manifest.tsv could not be opened.\n\n");
+        print_note(root_path);
+        print_note("Press START to exit.");
+        while ((read_press() & PSP_CTRL_START) == 0) {
+        }
         sceKernelExitGame();
         return 1;
     }
 
-    returned_result = argument_value(argc, argv, "--psptest-result");
-    state_status = load_state(&state);
-    if (state_status != 0) {
-        int status = resume_run(returned_result);
-        if (status < 0) {
-            pspDebugScreenPrintf("Unable to resume PSPTEST run.\n");
-            sceKernelDelayThread(3000000);
+    {
+        char results_path[320];
+        if (make_path(results_path, sizeof(results_path), "results") == 0) {
+            sceIoMkdir(results_path, 0777);
         }
     }
 
-    run_menu();
-    return 0;
+    load_results();
+    state = read_state();
+    if (state.running) {
+        snprintf(interrupted_module, sizeof(interrupted_module), "%s", state.module);
+        if (state.index >= 0 && state.index < test_count) {
+            tests[state.index].status = TEST_WARNING;
+        }
+        write_state("idle", -1);
+    }
+
+    for (;;) {
+        int passed;
+        int failed;
+        int warnings;
+        int pending;
+        unsigned int buttons;
+
+        load_results();
+        count_statuses(&passed, &failed, &warnings, &pending);
+
+        print_header("Hardware Test Launcher");
+
+        set_color(COLOR_WHITE);
+        pspDebugScreenPrintf("Tests: %d   ", test_count);
+        set_color(COLOR_GREEN);
+        pspDebugScreenPrintf("PASS %d   ", passed);
+        set_color(COLOR_RED);
+        pspDebugScreenPrintf("FAIL %d   ", failed);
+        set_color(COLOR_AMBER);
+        pspDebugScreenPrintf("WARN %d   ", warnings);
+        set_color(COLOR_WHITE);
+        pspDebugScreenPrintf("PENDING %d\n\n", pending);
+
+        if (interrupted_module[0] != '\0') {
+            set_color(COLOR_AMBER);
+            pspDebugScreenPrintf("Previous test interrupted: %s\n\n", interrupted_module);
+        }
+
+        set_color(COLOR_WHITE);
+        pspDebugScreenPrintf("X       Run all automated tests\n");
+        pspDebugScreenPrintf("O       Browse tests\n");
+        pspDebugScreenPrintf("[]      Rerun failures\n");
+        pspDebugScreenPrintf("TRIANGLE Results\n");
+        pspDebugScreenPrintf("START   Exit\n\n");
+        print_note("Each test runs as a user PRX under the persistent launcher.");
+
+        buttons = read_press();
+        if ((buttons & PSP_CTRL_CROSS) != 0) {
+            int index;
+            for (index = 0; index < test_count; index++) {
+                int run_result = launch_test(index, "all");
+                load_result(&tests[index]);
+                if (run_result < 0) {
+                    tests[index].status = TEST_WARNING;
+                    break;
+                }
+            }
+        } else if ((buttons & PSP_CTRL_CIRCLE) != 0) {
+            browse_tests();
+        } else if ((buttons & PSP_CTRL_SQUARE) != 0) {
+            int index;
+            for (index = 0; index < test_count; index++) {
+                if (tests[index].status == TEST_FAIL) {
+                    int run_result = launch_test(index, "failed");
+                    load_result(&tests[index]);
+                    if (run_result < 0) {
+                        tests[index].status = TEST_WARNING;
+                        break;
+                    }
+                }
+            }
+        } else if ((buttons & PSP_CTRL_TRIANGLE) != 0) {
+            show_summary();
+        } else if ((buttons & PSP_CTRL_START) != 0) {
+            sceKernelExitGame();
+            return 0;
+        }
+    }
 }

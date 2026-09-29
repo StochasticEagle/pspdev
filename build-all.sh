@@ -179,6 +179,7 @@ stage_label() {
         3) printf '%s\n' "PSP packages" ;;
         4) printf '%s\n' "psp-linkusb" ;;
         5) printf '%s\n' "psp-ebootsigner" ;;
+        6) printf '%s\n' "PSPTEST" ;;
         *) printf '%s\n' "Step $1" ;;
     esac
 }

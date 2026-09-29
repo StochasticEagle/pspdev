@@ -67,7 +67,7 @@ jobs:
         run: |
           mkdir -p ci-logs
           set -o pipefail
-          make -C components/psp-packages/psptest bundle V=1 2>&1 | tee ci-logs/psptest-build.log
+          ./psptest/build-suite.sh 2>&1 | tee ci-logs/psptest-build.log
 
       - name: Upload PSPTEST diagnostics
         if: always()
@@ -80,4 +80,4 @@ jobs:
             components/psp-packages/build/_logs/*.log
             components/psp-packages/psptest/oslib/*.map
             components/psp-packages/psptest/oslib/*.elf
-            components/psp-packages/psptest/build/PSP/GAME/psptest/
+            build/PSP/GAME/psptest/
