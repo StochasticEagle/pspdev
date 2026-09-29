@@ -37,7 +37,9 @@ jobs:
         run: brew uninstall cmake
 
       - name: Install dependencies
-        run: ./prepare.sh
+        run: |
+          ./prepare.sh
+          sudo apt-get install -y libarchive-tools
 
       - name: Install prebuilt PSP toolchain
         run: |
