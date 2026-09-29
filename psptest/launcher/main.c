@@ -312,18 +312,38 @@ static int result_path_for(int index, char *path, size_t path_size) {
 
 typedef struct SupervisorRequest {
     int index;
-    int result;
+    volatile int result;
     const char *failure_stage;
 } SupervisorRequest;
 
+typedef struct ProgressSnapshot {
+    int state;
+    int result;
+    int current_case;
+    unsigned int case_count;
+    unsigned int completed;
+    unsigned int passed;
+    unsigned int failed;
+    unsigned int skipped;
+    int previous_status;
+    uint64_t suite_start_us;
+    uint64_t case_start_us;
+    uint64_t completed_time_us;
+    char current_case_name[PSPTEST_CASE_NAME_MAX];
+    char previous_case_name[PSPTEST_CASE_NAME_MAX];
+} ProgressSnapshot;
+
+#define SUPERVISOR_PENDING (-2147483647 - 1)
+
 static SupervisorRequest supervisor_request;
+static PspTestModuleControl supervisor_control;
 
 static int supervisor_thread(SceSize args, void *argp) {
     SupervisorRequest *request = &supervisor_request;
 
     (void)args;
     (void)argp;
-    PspTestModuleControl control;
+    PspTestModuleControl *control = &supervisor_control;
     char module_args[512];
     char child_path[384];
     char result_path[320];
@@ -353,14 +373,15 @@ static int supervisor_thread(SceSize args, void *argp) {
         return 0;
     }
 
-    memset(&control, 0, sizeof(control));
-    control.size = sizeof(control);
-    control.version = PSPTEST_MODULE_ABI_VERSION;
-    control.completion_sema = completion_sema;
-    control.test_thread = -1;
-    control.state = PSPTEST_MODULE_IDLE;
-    control.result = 2;
-    snprintf(control.output_path, sizeof(control.output_path), "%s", result_path);
+    memset(control, 0, sizeof(*control));
+    control->size = sizeof(*control);
+    control->version = PSPTEST_MODULE_ABI_VERSION;
+    control->completion_sema = completion_sema;
+    control->test_thread = -1;
+    control->state = PSPTEST_MODULE_IDLE;
+    control->result = 2;
+    control->current_case = -1;
+    snprintf(control->output_path, sizeof(control->output_path), "%s", result_path);
 
     {
         int first_length = snprintf(module_args, sizeof(module_args), "%s", child_path);
@@ -370,7 +391,7 @@ static int supervisor_thread(SceSize args, void *argp) {
             result = -2;
             goto done;
         }
-        second_length = snprintf(module_args + first_length + 1, sizeof(module_args) - (size_t)first_length - 1, "--psptest-control=0x%08X", (unsigned int)(uintptr_t)&control);
+        second_length = snprintf(module_args + first_length + 1, sizeof(module_args) - (size_t)first_length - 1, "--psptest-control=0x%08X", (unsigned int)(uintptr_t)control);
         if (second_length < 0 || (size_t)first_length + (size_t)second_length + 2 > sizeof(module_args)) {
             request->failure_stage = "arguments";
             result = -2;
@@ -402,12 +423,12 @@ static int supervisor_thread(SceSize args, void *argp) {
         goto done;
     }
 
-    result = control.state == PSPTEST_MODULE_COMPLETE ? control.result : (control.result < 0 ? control.result : -1);
-    if (control.state != PSPTEST_MODULE_COMPLETE) {
+    result = control->state == PSPTEST_MODULE_COMPLETE ? control->result : (control->result < 0 ? control->result : -1);
+    if (control->state != PSPTEST_MODULE_COMPLETE) {
         request->failure_stage = "test";
     }
-    if (control.test_thread > 0) {
-        sceKernelWaitThreadEnd(control.test_thread, NULL);
+    if (control->test_thread > 0) {
+        sceKernelWaitThreadEnd(control->test_thread, NULL);
     }
 
 done:
@@ -421,6 +442,147 @@ done:
 
     request->result = result;
     return 0;
+}
+
+static int copy_progress_snapshot(ProgressSnapshot *snapshot) {
+    unsigned int before;
+    unsigned int after;
+    int attempts;
+
+    if (snapshot == NULL) return 0;
+
+    for (attempts = 0; attempts < 8; attempts++) {
+        before = supervisor_control.progress_sequence;
+        if ((before & 1u) != 0u) continue;
+        __sync_synchronize();
+
+        snapshot->state = supervisor_control.state;
+        snapshot->result = supervisor_control.result;
+        snapshot->current_case = supervisor_control.current_case;
+        snapshot->case_count = supervisor_control.case_count;
+        snapshot->completed = supervisor_control.completed;
+        snapshot->passed = supervisor_control.passed;
+        snapshot->failed = supervisor_control.failed;
+        snapshot->skipped = supervisor_control.skipped;
+        snapshot->previous_status = supervisor_control.previous_status;
+        snapshot->suite_start_us = supervisor_control.suite_start_us;
+        snapshot->case_start_us = supervisor_control.case_start_us;
+        snapshot->completed_time_us = supervisor_control.completed_time_us;
+        snprintf(snapshot->current_case_name, sizeof(snapshot->current_case_name), "%s", supervisor_control.current_case_name);
+        snprintf(snapshot->previous_case_name, sizeof(snapshot->previous_case_name), "%s", supervisor_control.previous_case_name);
+
+        __sync_synchronize();
+        after = supervisor_control.progress_sequence;
+        if (before == after && (after & 1u) == 0u) return 1;
+    }
+
+    return 0;
+}
+
+static const char *case_status_name(int status) {
+    switch ((PspTestStatus)status) {
+        case PSPTEST_STATUS_PASS: return "PASS";
+        case PSPTEST_STATUS_FAIL: return "FAIL";
+        case PSPTEST_STATUS_SKIP: return "SKIP";
+        case PSPTEST_STATUS_INTERACTIVE_PASS: return "PASS";
+        case PSPTEST_STATUS_INTERACTIVE_FAIL: return "FAIL";
+        default: return "?";
+    }
+}
+
+static unsigned int case_status_color(int status) {
+    switch ((PspTestStatus)status) {
+        case PSPTEST_STATUS_PASS:
+        case PSPTEST_STATUS_INTERACTIVE_PASS:
+            return COLOR_GREEN;
+        case PSPTEST_STATUS_FAIL:
+        case PSPTEST_STATUS_INTERACTIVE_FAIL:
+            return COLOR_RED;
+        case PSPTEST_STATUS_SKIP:
+            return COLOR_AMBER;
+        default:
+            return COLOR_WHITE;
+    }
+}
+
+static void print_duration_us(uint64_t value) {
+    unsigned int minutes = (unsigned int)(value / 60000000u);
+    unsigned int seconds = (unsigned int)((value / 1000000u) % 60u);
+    unsigned int hundredths = (unsigned int)((value / 10000u) % 100u);
+    pspDebugScreenPrintf("%02u:%02u.%02u", minutes, seconds, hundredths);
+}
+
+static void render_running_progress(int module_index) {
+    ProgressSnapshot progress;
+    uint64_t now = sceKernelGetSystemTimeWide();
+    uint64_t suite_elapsed = 0;
+    uint64_t case_elapsed = 0;
+    uint64_t estimated_remaining = 0;
+    unsigned int percent = 0;
+    unsigned int bar_width = 40;
+    unsigned int filled = 0;
+    unsigned int i;
+
+    memset(&progress, 0, sizeof(progress));
+    progress.current_case = -1;
+    copy_progress_snapshot(&progress);
+
+    if (progress.suite_start_us != 0 && now >= progress.suite_start_us) suite_elapsed = now - progress.suite_start_us;
+    if (progress.case_start_us != 0 && now >= progress.case_start_us) case_elapsed = now - progress.case_start_us;
+    if (progress.case_count != 0) {
+        percent = progress.completed * 100u / progress.case_count;
+        filled = progress.completed * bar_width / progress.case_count;
+    }
+    if (progress.completed != 0 && progress.case_count > progress.completed) {
+        estimated_remaining = (progress.completed_time_us / progress.completed) * (progress.case_count - progress.completed);
+        if (progress.current_case >= 0 && estimated_remaining > case_elapsed) estimated_remaining -= case_elapsed;
+    }
+
+    print_header("Running");
+    pspDebugScreenPrintf("Module %d/%d: %s\n", module_index + 1, test_count, tests[module_index].module);
+    pspDebugScreenPrintf("Cases: %u/%u  %u%%\n[", progress.completed, progress.case_count, percent);
+    for (i = 0; i < bar_width; i++) pspDebugScreenPrintf("%c", i < filled ? '#' : '-');
+    pspDebugScreenPrintf("]\n\n");
+
+    pspDebugScreenPrintf("Current: ");
+    if (progress.current_case >= 0 && progress.current_case_name[0] != '\0') {
+        pspDebugScreenPrintf("[%d/%u] %s\n", progress.current_case + 1, progress.case_count, progress.current_case_name);
+        pspDebugScreenPrintf("Elapsed: ");
+        print_duration_us(case_elapsed);
+        pspDebugScreenPrintf("\n");
+    } else {
+        pspDebugScreenPrintf("starting/completing\n");
+    }
+
+    pspDebugScreenPrintf("Suite elapsed: ");
+    print_duration_us(suite_elapsed);
+    pspDebugScreenPrintf("\n");
+    pspDebugScreenPrintf("Estimated remaining: ");
+    if (progress.completed != 0) {
+        pspDebugScreenPrintf("~");
+        print_duration_us(estimated_remaining);
+        pspDebugScreenPrintf("\n");
+    } else {
+        pspDebugScreenPrintf("estimating...\n");
+    }
+
+    pspDebugScreenPrintf("\nResults: ");
+    set_color(COLOR_GREEN);
+    pspDebugScreenPrintf("PASS %u  ", progress.passed);
+    set_color(COLOR_RED);
+    pspDebugScreenPrintf("FAIL %u  ", progress.failed);
+    set_color(COLOR_AMBER);
+    pspDebugScreenPrintf("SKIP %u\n", progress.skipped);
+    set_color(COLOR_WHITE);
+
+    if (progress.previous_case_name[0] != '\0') {
+        pspDebugScreenPrintf("\nPrevious: %s  ", progress.previous_case_name);
+        set_color(case_status_color(progress.previous_status));
+        pspDebugScreenPrintf("%s\n", case_status_name(progress.previous_status));
+        set_color(COLOR_WHITE);
+    }
+
+    print_note("The launcher UI remains active while the test thread runs.");
 }
 
 static int launch_test(int index, const char *mode) {
@@ -443,8 +605,10 @@ static int launch_test(int index, const char *mode) {
     last_launch_stage[0] = '\0';
     last_launch_error = 0;
     request->index = index;
-    request->result = -1;
+    request->result = SUPERVISOR_PENDING;
     request->failure_stage = NULL;
+    memset(&supervisor_control, 0, sizeof(supervisor_control));
+    supervisor_control.current_case = -1;
 
     supervisor = sceKernelCreateThread("psptest-supervisor", supervisor_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL);
     if (supervisor < 0) {
@@ -459,8 +623,12 @@ static int launch_test(int index, const char *mode) {
         snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-start");
         last_launch_error = result;
     } else {
+        while (request->result == SUPERVISOR_PENDING) {
+            render_running_progress(index);
+            sceKernelDelayThread(100000);
+        }
         result = sceKernelWaitThreadEnd(supervisor, NULL);
-        if (result < 0 && request->failure_stage == NULL && request->result == -1) {
+        if (result < 0 && request->failure_stage == NULL && request->result == SUPERVISOR_PENDING) {
             snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor");
             last_launch_error = result;
         }
@@ -468,7 +636,7 @@ static int launch_test(int index, const char *mode) {
     sceKernelDeleteThread(supervisor);
     write_state("idle", -1);
 
-    if (request->failure_stage == NULL && request->result == -1 && result < 0) {
+    if (request->failure_stage == NULL && request->result == SUPERVISOR_PENDING && result < 0) {
         return result;
     }
     if (request->result < 0) {
