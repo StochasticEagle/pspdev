@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           ./prepare.sh
-          sudo apt-get install -y libarchive-tools
+          sudo apt-get install -y libarchive-tools libtool-bin
 
       - name: Install prebuilt PSP toolchain
         run: |
