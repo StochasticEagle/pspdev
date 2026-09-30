@@ -312,7 +312,8 @@ static int result_path_for(int index, char *path, size_t path_size) {
 
 typedef struct SupervisorRequest {
     int index;
-    volatile int result;
+    SceUID completion_sema;
+    int result;
     const char *failure_stage;
 } SupervisorRequest;
 
@@ -333,7 +334,6 @@ typedef struct ProgressSnapshot {
     char previous_case_name[PSPTEST_CASE_NAME_MAX];
 } ProgressSnapshot;
 
-#define SUPERVISOR_PENDING (-2147483647 - 1)
 
 static SupervisorRequest supervisor_request;
 static PspTestModuleControl supervisor_control;
@@ -348,7 +348,7 @@ static int supervisor_thread(SceSize args, void *argp) {
     char child_path[384];
     char result_path[320];
     SceUID module_id = -1;
-    SceUID completion_sema = -1;
+    SceUID completion_sema = request->completion_sema;
     int module_status = 0;
     int result = -1;
 
@@ -366,22 +366,6 @@ static int supervisor_thread(SceSize args, void *argp) {
     }
 
     remove(result_path);
-    completion_sema = sceKernelCreateSema("psptest-complete", 0, 0, 1, NULL);
-    if (completion_sema < 0) {
-        request->failure_stage = "semaphore";
-        request->result = completion_sema;
-        return 0;
-    }
-
-    memset(control, 0, sizeof(*control));
-    control->size = sizeof(*control);
-    control->version = PSPTEST_MODULE_ABI_VERSION;
-    control->completion_sema = completion_sema;
-    control->test_thread = -1;
-    control->state = PSPTEST_MODULE_IDLE;
-    control->result = 2;
-    control->current_case = -1;
-    snprintf(control->output_path, sizeof(control->output_path), "%s", result_path);
 
     {
         int first_length = snprintf(module_args, sizeof(module_args), "%s", child_path);
@@ -423,12 +407,12 @@ static int supervisor_thread(SceSize args, void *argp) {
         goto done;
     }
 
-    result = control->state == PSPTEST_MODULE_COMPLETE ? control->result : (control->result < 0 ? control->result : -1);
-    if (control->state != PSPTEST_MODULE_COMPLETE) {
+    result = control->progress.state == PSPTEST_MODULE_COMPLETE ? control->progress.result : (control->progress.result < 0 ? control->progress.result : -1);
+    if (control->progress.state != PSPTEST_MODULE_COMPLETE) {
         request->failure_stage = "test";
     }
-    if (control->test_thread > 0) {
-        sceKernelWaitThreadEnd(control->test_thread, NULL);
+    if (control->progress.test_thread > 0) {
+        sceKernelWaitThreadEnd(control->progress.test_thread, NULL);
     }
 
 done:
@@ -436,10 +420,6 @@ done:
         sceKernelStopModule(module_id, 0, NULL, &module_status, NULL);
         sceKernelUnloadModule(module_id);
     }
-    if (completion_sema >= 0) {
-        sceKernelDeleteSema(completion_sema);
-    }
-
     request->result = result;
     return 0;
 }
@@ -452,27 +432,27 @@ static int copy_progress_snapshot(ProgressSnapshot *snapshot) {
     if (snapshot == NULL) return 0;
 
     for (attempts = 0; attempts < 8; attempts++) {
-        before = supervisor_control.progress_sequence;
+        before = supervisor_control.progress.sequence;
         if ((before & 1u) != 0u) continue;
         __sync_synchronize();
 
-        snapshot->state = supervisor_control.state;
-        snapshot->result = supervisor_control.result;
-        snapshot->current_case = supervisor_control.current_case;
-        snapshot->case_count = supervisor_control.case_count;
-        snapshot->completed = supervisor_control.completed;
-        snapshot->passed = supervisor_control.passed;
-        snapshot->failed = supervisor_control.failed;
-        snapshot->skipped = supervisor_control.skipped;
-        snapshot->previous_status = supervisor_control.previous_status;
-        snapshot->suite_start_us = supervisor_control.suite_start_us;
-        snapshot->case_start_us = supervisor_control.case_start_us;
-        snapshot->completed_time_us = supervisor_control.completed_time_us;
-        snprintf(snapshot->current_case_name, sizeof(snapshot->current_case_name), "%s", supervisor_control.current_case_name);
-        snprintf(snapshot->previous_case_name, sizeof(snapshot->previous_case_name), "%s", supervisor_control.previous_case_name);
+        snapshot->state = supervisor_control.progress.state;
+        snapshot->result = supervisor_control.progress.result;
+        snapshot->current_case = supervisor_control.progress.current_case;
+        snapshot->case_count = supervisor_control.progress.case_count;
+        snapshot->completed = supervisor_control.progress.completed;
+        snapshot->passed = supervisor_control.progress.passed;
+        snapshot->failed = supervisor_control.progress.failed;
+        snapshot->skipped = supervisor_control.progress.skipped;
+        snapshot->previous_status = supervisor_control.progress.previous_status;
+        snapshot->suite_start_us = supervisor_control.progress.suite_start_us;
+        snapshot->case_start_us = supervisor_control.progress.case_start_us;
+        snapshot->completed_time_us = supervisor_control.progress.completed_time_us;
+        snprintf(snapshot->current_case_name, sizeof(snapshot->current_case_name), "%s", supervisor_control.progress.current_case_name);
+        snprintf(snapshot->previous_case_name, sizeof(snapshot->previous_case_name), "%s", supervisor_control.progress.previous_case_name);
 
         __sync_synchronize();
-        after = supervisor_control.progress_sequence;
+        after = supervisor_control.progress.sequence;
         if (before == after && (after & 1u) == 0u) return 1;
     }
 
@@ -605,15 +585,35 @@ static int launch_test(int index, const char *mode) {
     last_launch_stage[0] = '\0';
     last_launch_error = 0;
     request->index = index;
-    request->result = SUPERVISOR_PENDING;
+    request->result = -1;
     request->failure_stage = NULL;
+    request->completion_sema = sceKernelCreateSema("psptest-complete", 0, 0, 1, NULL);
+    if (request->completion_sema < 0) {
+        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "semaphore");
+        last_launch_error = request->completion_sema;
+        write_state("idle", -1);
+        return request->completion_sema;
+    }
+
     memset(&supervisor_control, 0, sizeof(supervisor_control));
-    supervisor_control.current_case = -1;
+    supervisor_control.size = sizeof(supervisor_control);
+    supervisor_control.version = PSPTEST_MODULE_ABI_VERSION;
+    supervisor_control.completion_sema = request->completion_sema;
+    {
+        char result_path[320];
+        if (result_path_for(index, result_path, sizeof(result_path)) != 0) {
+            sceKernelDeleteSema(request->completion_sema);
+            write_state("idle", -1);
+            return -2;
+        }
+        snprintf(supervisor_control.output_path, sizeof(supervisor_control.output_path), "%s", result_path);
+    }
 
     supervisor = sceKernelCreateThread("psptest-supervisor", supervisor_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL);
     if (supervisor < 0) {
         snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-create");
         last_launch_error = supervisor;
+        sceKernelDeleteSema(request->completion_sema);
         write_state("idle", -1);
         return supervisor;
     }
@@ -623,20 +623,21 @@ static int launch_test(int index, const char *mode) {
         snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-start");
         last_launch_error = result;
     } else {
-        while (request->result == SUPERVISOR_PENDING) {
+        for (;;) {
+            SceUInt timeout = 100000;
+            result = sceKernelWaitThreadEnd(supervisor, &timeout);
+            if (result == 0) break;
             render_running_progress(index);
-            sceKernelDelayThread(100000);
-        }
-        result = sceKernelWaitThreadEnd(supervisor, NULL);
-        if (result < 0 && request->failure_stage == NULL && request->result == SUPERVISOR_PENDING) {
-            snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor");
-            last_launch_error = result;
         }
     }
+
     sceKernelDeleteThread(supervisor);
+    sceKernelDeleteSema(request->completion_sema);
     write_state("idle", -1);
 
-    if (request->failure_stage == NULL && request->result == SUPERVISOR_PENDING && result < 0) {
+    if (request->failure_stage == NULL && result < 0) {
+        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor");
+        last_launch_error = result;
         return result;
     }
     if (request->result < 0) {
