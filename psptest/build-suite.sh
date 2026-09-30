@@ -11,6 +11,7 @@ PROGRAM_ROOT="${ROOT}/build/PSP/GAME/psptest"
 MANIFEST="${PROGRAM_ROOT}/manifest.tsv"
 ARCHIVE="${ROOT}/build/psptest.tar.gz"
 EXPORTS="${ROOT}/psptest/psptest.exp"
+MODULE_OVERRIDES="${BUILD_ROOT}/module-overrides.mk"
 
 if [[ -z "${PSPDEV:-}" ]]; then
     echo "ERROR: PSPDEV is not set." >&2
@@ -37,6 +38,10 @@ PACKAGES_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/psp-packages
 rm -rf "${BUILD_ROOT}" "${PROGRAM_ROOT}"
 mkdir -p "${FRAMEWORK_BUILD}" "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${PROGRAM_ROOT}/results"
 
+cat > "${MODULE_OVERRIDES}" <<'EOF'
+override LDFLAGS += -nostartfiles
+EOF
+
 echo "Building PSPTEST framework ..."
 psp-gcc -O2 -G0 -Wall -Wextra -Werror -I"${PSPTEST_SOURCE}" -I"${PSPSDK}/include" -c "${PSPTEST_SOURCE}/psptest.c" -o "${FRAMEWORK_BUILD}/psptest.o"
 psp-gcc-ar rcs "${FRAMEWORK_BUILD}/libpsptest.a" "${FRAMEWORK_BUILD}/psptest.o"
@@ -50,7 +55,7 @@ build_namespace() {
     local source_root="$1"
     local namespace="$2"
     local makefile source_dir module build_dir program_module_dir prx local_exports build_log make_status
-    local -a prx_files
+    local -a prx_files elf_files
 
     [[ -d "${source_root}" ]] || return 0
 
@@ -69,7 +74,7 @@ build_namespace() {
         echo "Building PSPTEST ${namespace}/${module} ..."
         build_log="${build_dir}/build.log"
         set +e
-        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PSPTEST_FRAMEWORK_LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all 2>&1 | tee "${build_log}"
+        make -C "${build_dir}" -f "${makefile}" -f "${MODULE_OVERRIDES}" VPATH="${source_dir}" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PSPTEST_FRAMEWORK_LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all 2>&1 | tee "${build_log}"
         make_status=${PIPESTATUS[0]}
         set -e
         if (( make_status != 0 )); then
@@ -77,6 +82,25 @@ build_namespace() {
         fi
         if grep -Fq 'could not fixup imports, stubs out of order' "${build_log}"; then
             echo "ERROR: PSPTEST ${namespace}/${module} has out-of-order PRX import stubs; refusing to package the module." >&2
+            exit 1
+        fi
+
+        if ! grep -Fq -- '-nostartfiles' "${build_log}"; then
+            echo "ERROR: PSPTEST ${namespace}/${module} was linked without -nostartfiles." >&2
+            exit 1
+        fi
+
+        mapfile -t elf_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.elf' -print | sort)
+        if (( ${#elf_files[@]} != 1 )); then
+            echo "ERROR: PSPTEST ${namespace}/${module} produced ${#elf_files[@]} ELF files; expected exactly one module ELF." >&2
+            exit 1
+        fi
+        if psp-nm -g "${elf_files[0]}" | grep -Eq '[[:space:]]_start$'; then
+            echo "ERROR: PSPTEST ${namespace}/${module} still contains CRT _start; refusing to package it as a loadable test module." >&2
+            exit 1
+        fi
+        if ! psp-nm -g "${elf_files[0]}" | grep -Eq '[[:space:]]module_start$'; then
+            echo "ERROR: PSPTEST ${namespace}/${module} does not export a direct module_start entry." >&2
             exit 1
         fi
 

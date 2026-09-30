@@ -315,6 +315,8 @@ typedef struct SupervisorRequest {
     SceUID completion_sema;
     int result;
     const char *failure_stage;
+    volatile int module_loaded;
+    volatile int module_started;
 } SupervisorRequest;
 
 typedef struct ProgressSnapshot {
@@ -389,6 +391,8 @@ static int supervisor_thread(SceSize args, void *argp) {
         result = module_id;
         goto done;
     }
+    __sync_synchronize();
+    request->module_loaded = 1;
 
     {
         size_t first_length = strlen(module_args);
@@ -400,6 +404,8 @@ static int supervisor_thread(SceSize args, void *argp) {
         request->failure_stage = "start";
         goto done;
     }
+    __sync_synchronize();
+    request->module_started = 1;
 
     result = sceKernelWaitSema(completion_sema, 1, NULL);
     if (result < 0) {
@@ -569,24 +575,23 @@ static int launch_test(int index, const char *mode) {
     SupervisorRequest *request = &supervisor_request;
     SceUID supervisor;
     int result;
+    int running_state_written = 0;
 
     if (index < 0 || index >= test_count) {
         return -1;
     }
 
-    if (write_state(mode, index) != 0) {
-        return -2;
-    }
-
-    print_header("Running");
+    print_header("Launching");
     pspDebugScreenPrintf("%s\n\n", tests[index].module);
-    print_note("The test module is running on a dedicated test thread.");
+    print_note("Loading test PRX...");
 
     last_launch_stage[0] = '\0';
     last_launch_error = 0;
     request->index = index;
     request->result = -1;
     request->failure_stage = NULL;
+    request->module_loaded = 0;
+    request->module_started = 0;
     request->completion_sema = sceKernelCreateSema("psptest-complete", 0, 0, 1, NULL);
     if (request->completion_sema < 0) {
         snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "semaphore");
@@ -626,14 +631,30 @@ static int launch_test(int index, const char *mode) {
         for (;;) {
             SceUInt timeout = 100000;
             result = sceKernelWaitThreadEnd(supervisor, &timeout);
+            __sync_synchronize();
+            if (request->module_started) {
+                if (!running_state_written) {
+                    if (write_state(mode, index) != 0) {
+                        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "state");
+                        last_launch_error = -2;
+                        result = -2;
+                        break;
+                    }
+                    running_state_written = 1;
+                }
+                render_running_progress(index);
+            } else if (request->module_loaded) {
+                print_header("Launching");
+                pspDebugScreenPrintf("%s\n\n", tests[index].module);
+                print_note("PRX loaded; starting module...");
+            }
             if (result == 0) break;
-            render_running_progress(index);
         }
     }
 
     sceKernelDeleteThread(supervisor);
     sceKernelDeleteSema(request->completion_sema);
-    write_state("idle", -1);
+    if (running_state_written) write_state("idle", -1);
 
     if (request->failure_stage == NULL && result < 0) {
         snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor");
