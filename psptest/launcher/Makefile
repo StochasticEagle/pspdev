@@ -4,7 +4,7 @@ OBJS = main.o
 CFLAGS = -O2 -G0 -Wall -Wextra -Werror
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
-LIBS = -lpspkubridge
+LIBS = -lpsptest -lpspkubridge
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = PSPTEST

@@ -74,7 +74,7 @@ build_namespace() {
         echo "Building PSPTEST ${namespace}/${module} ..."
         build_log="${build_dir}/build.log"
         set +e
-        make -C "${build_dir}" -f "${makefile}" -f "${MODULE_OVERRIDES}" VPATH="${source_dir}" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PSPTEST_FRAMEWORK_LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all 2>&1 | tee "${build_log}"
+        make -C "${build_dir}" -f "${makefile}" -f "${MODULE_OVERRIDES}" VPATH="${source_dir}" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PRX_EXPORTS="${local_exports}" all 2>&1 | tee "${build_log}"
         make_status=${PIPESTATUS[0]}
         set -e
         if (( make_status != 0 )); then
@@ -82,6 +82,11 @@ build_namespace() {
         fi
         if grep -Fq 'could not fixup imports, stubs out of order' "${build_log}"; then
             echo "ERROR: PSPTEST ${namespace}/${module} has out-of-order PRX import stubs; refusing to package the module." >&2
+            exit 1
+        fi
+
+        if grep -Eq -- '(^|[[:space:]])-lpsptest([[:space:]]|$)' "${build_log}"; then
+            echo "ERROR: PSPTEST ${namespace}/${module} links the runner library; test PRXs must be registration-only." >&2
             exit 1
         fi
 
@@ -99,8 +104,53 @@ build_namespace() {
             echo "ERROR: PSPTEST ${namespace}/${module} still contains CRT _start; refusing to package it as a loadable test module." >&2
             exit 1
         fi
-        if ! psp-nm -g "${elf_files[0]}" | grep -Eq '[[:space:]]module_start$'; then
+        if ! psp-nm -g "${elf_files[0]}" | grep -Eq '[[:space:]]module_start        mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
+        if (( ${#prx_files[@]} != 1 )); then
+            echo "ERROR: PSPTEST ${namespace}/${module} produced ${#prx_files[@]} PRX files; expected exactly one module PRX." >&2
+            exit 1
+        fi
+        prx="${prx_files[0]}"
+
+        cp "${prx}" "${program_module_dir}/test.prx"
+        printf 'TEST\t%s/%s\t%s/%s/test.prx\tmodule\n' "${namespace}" "${module}" "${namespace}" "${module}" >> "${MANIFEST}"
+    done < <(find "${source_root}" -mindepth 2 -maxdepth 2 -type f -name Makefile.test -print0 | sort -z)
+}
+
+build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
+build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
+
+PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk" src/psptest psptest)"
+PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages" psptest)"
+
+if [[ "${PSPSDK_TEST_STATE_BEFORE}" != "${PSPSDK_TEST_STATE_AFTER}" ]]; then
+    echo "ERROR: PSPTEST build modified or generated files under PSPSDK PSPTEST source paths." >&2
+    diff -u <(printf '%s\n' "${PSPSDK_TEST_STATE_BEFORE}") <(printf '%s\n' "${PSPSDK_TEST_STATE_AFTER}") || true
+    exit 1
+fi
+if [[ "${PACKAGES_TEST_STATE_BEFORE}" != "${PACKAGES_TEST_STATE_AFTER}" ]]; then
+    echo "ERROR: PSPTEST build modified or generated files under components/psp-packages/psptest." >&2
+    diff -u <(printf '%s\n' "${PACKAGES_TEST_STATE_BEFORE}") <(printf '%s\n' "${PACKAGES_TEST_STATE_AFTER}") || true
+    exit 1
+fi
+
+if ! grep -q '^TEST' "${MANIFEST}"; then
+    echo "ERROR: No PSPTEST modules were discovered." >&2
+    exit 1
+fi
+
+tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP/GAME/psptest
+
+echo "PSPTEST program tree:"
+echo "  ${PROGRAM_ROOT}"
+echo "Archive:"
+echo "  ${ARCHIVE}"
+; then
             echo "ERROR: PSPTEST ${namespace}/${module} does not export a direct module_start entry." >&2
+            exit 1
+        fi
+
+        if psp-nm -u "${elf_files[0]}" | grep -Eq 'psptest_run_suite|psptest_run_suite_to_file|psptest_run_module'; then
+            echo "ERROR: PSPTEST ${namespace}/${module} references runner/orchestrator symbols." >&2
             exit 1
         fi
 
