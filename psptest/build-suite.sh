@@ -49,7 +49,7 @@ printf 'PSPTEST_MANIFEST\t1\n' > "${MANIFEST}"
 build_namespace() {
     local source_root="$1"
     local namespace="$2"
-    local makefile source_dir module build_dir program_module_dir prx local_exports
+    local makefile source_dir module build_dir program_module_dir prx local_exports build_log make_status
     local -a prx_files
 
     [[ -d "${source_root}" ]] || return 0
@@ -67,7 +67,18 @@ build_namespace() {
         install -m 644 "${EXPORTS}" "${local_exports}"
 
         echo "Building PSPTEST ${namespace}/${module} ..."
-        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PSPTEST_FRAMEWORK_LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all
+        build_log="${build_dir}/build.log"
+        set +e
+        make -C "${build_dir}" -f "${makefile}" VPATH="${source_dir}" PSPTEST_FRAMEWORK_INCDIR="${PSPTEST_SOURCE}" PSPTEST_FRAMEWORK_LIBDIR="${FRAMEWORK_BUILD}" PRX_EXPORTS="${local_exports}" all 2>&1 | tee "${build_log}"
+        make_status=${PIPESTATUS[0]}
+        set -e
+        if (( make_status != 0 )); then
+            exit "${make_status}"
+        fi
+        if grep -Fq 'could not fixup imports, stubs out of order' "${build_log}"; then
+            echo "ERROR: PSPTEST ${namespace}/${module} has out-of-order PRX import stubs; refusing to package the module." >&2
+            exit 1
+        fi
 
         mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
         if (( ${#prx_files[@]} != 1 )); then
