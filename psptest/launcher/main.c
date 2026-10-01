@@ -3,6 +3,7 @@
 #include <pspdebug.h>
 #include <pspiofilemgr.h>
 #include <pspkernel.h>
+#include <pspkerror.h>
 #include <pspmodulemgr.h>
 #include <pspthreadman.h>
 #include <psptest.h>
@@ -56,6 +57,8 @@ static char root_path[256];
 static char interrupted_module[64];
 static char last_launch_stage[32];
 static int last_launch_error;
+static int launcher_quarantined;
+static char quarantined_module[64];
 
 static void set_color(unsigned int color) {
     pspDebugScreenSetTextColor(color);
@@ -298,7 +301,6 @@ static RunState read_state(void) {
 static int result_path_for(int index, char *path, size_t path_size) {
     char suffix[160];
     int length = snprintf(suffix, sizeof(suffix), "results/%s.log", tests[index].module);
-
     if (length < 0 || (size_t)length >= sizeof(suffix)) {
         if (path_size > 0) {
             path[0] = '\0';
@@ -312,15 +314,22 @@ static int result_path_for(int index, char *path, size_t path_size) {
 typedef struct SupervisorRequest {
     int index;
     int result;
+    int error_code;
     const char *failure_stage;
+    char mode[16];
     volatile int module_loaded;
+    volatile int module_registered;
     volatile int module_started;
+    volatile int module_quarantined;
 } SupervisorRequest;
 
 typedef struct RunnerState {
     const PspTestSuite *suite;
+    PspTestEnvironment environment;
     char output_path[320];
+    unsigned int gp_value;
     int result;
+    const char *failure_stage;
 } RunnerState;
 
 typedef struct ProgressSnapshot {
@@ -345,22 +354,55 @@ static RunnerState runner_state;
 static PspTestProgress supervisor_progress;
 
 static int runner_thread(SceSize args, void *argp) {
+    int lifecycle_result;
+
     (void)args;
     (void)argp;
-    runner_state.result = psptest_run_suite(runner_state.suite, runner_state.output_path, &supervisor_progress);
+
+    runner_state.result = PSPTEST_RESULT_ERROR;
+    runner_state.failure_stage = NULL;
+
+    if (runner_state.suite->setup != NULL) {
+        lifecycle_result = psptest_call_lifecycle_with_gp(runner_state.gp_value, runner_state.suite->setup, &runner_state.environment);
+        if (lifecycle_result != 0) {
+            runner_state.failure_stage = "setup";
+            return PSPTEST_RESULT_ERROR;
+        }
+    }
+
+    runner_state.result = psptest_run_suite(runner_state.suite, runner_state.output_path, &supervisor_progress, runner_state.gp_value);
+
+    if (runner_state.suite->teardown != NULL) {
+        lifecycle_result = psptest_call_lifecycle_with_gp(runner_state.gp_value, runner_state.suite->teardown, &runner_state.environment);
+        if (lifecycle_result != 0) {
+            runner_state.failure_stage = "teardown";
+            runner_state.result = PSPTEST_RESULT_ERROR;
+            return PSPTEST_RESULT_ERROR;
+        }
+    }
+
+    if (runner_state.result < 0) {
+        runner_state.failure_stage = "runner";
+        return PSPTEST_RESULT_ERROR;
+    }
+
     return runner_state.result;
 }
 
 static int supervisor_thread(SceSize args, void *argp) {
     SupervisorRequest *request = &supervisor_request;
     PspTestModuleRequest module_request;
+    SceKernelModuleInfo module_info;
     const PspTestSuite *suite = NULL;
     char child_path[384];
     char result_path[320];
     SceUID module_id = -1;
     SceUID runner = -1;
     int module_status = 0;
-    int result = -1;
+    int module_started = 0;
+    int state_written = 0;
+    int safe_to_unload = 1;
+    int result = PSPTEST_RESULT_ERROR;
     unsigned int last_sequence = 0;
     uint64_t last_progress_us = 0;
 
@@ -369,14 +411,16 @@ static int supervisor_thread(SceSize args, void *argp) {
 
     if (request->index < 0 || request->index >= test_count) {
         request->failure_stage = "request";
-        request->result = -1;
+        request->result = -1001;
+        request->error_code = -1001;
         return 0;
     }
 
     if (make_path(child_path, sizeof(child_path), tests[request->index].relative_path) != 0 ||
         result_path_for(request->index, result_path, sizeof(result_path)) != 0) {
         request->failure_stage = "path";
-        request->result = -2;
+        request->result = -1002;
+        request->error_code = -1002;
         return 0;
     }
 
@@ -387,43 +431,79 @@ static int supervisor_thread(SceSize args, void *argp) {
     module_id = kuKernelLoadModule(child_path, 0, NULL);
     if (module_id < 0) {
         request->failure_stage = "load";
-        result = module_id;
+        request->error_code = module_id;
+        result = -1003;
         goto done;
     }
     __sync_synchronize();
     request->module_loaded = 1;
+
+    memset(&module_info, 0, sizeof(module_info));
+    module_info.size = sizeof(module_info);
+    request->error_code = sceKernelQueryModuleInfo(module_id, &module_info);
+    if (request->error_code < 0) {
+        request->failure_stage = "module-info";
+        result = -1004;
+        goto done;
+    }
 
     module_request.magic = PSPTEST_MODULE_MAGIC;
     module_request.version = PSPTEST_ABI_VERSION;
     module_request.size = sizeof(module_request);
     module_request.suite_out = &suite;
 
-    result = sceKernelStartModule(module_id, sizeof(module_request), &module_request, &module_status, NULL);
-    if (result < 0) {
+    module_status = 0;
+    request->error_code = sceKernelStartModule(module_id, sizeof(module_request), &module_request, &module_status, NULL);
+    if (request->error_code < 0) {
         request->failure_stage = "start";
+        result = -1005;
         goto done;
     }
-    __sync_synchronize();
+    module_started = 1;
 
+    if (module_status != 0) {
+        request->failure_stage = "module-start";
+        request->error_code = module_status;
+        result = -1006;
+        goto done;
+    }
+
+    __sync_synchronize();
     if (suite == NULL || suite->version != PSPTEST_ABI_VERSION || suite->name == NULL || suite->cases == NULL || suite->case_count == 0) {
         request->failure_stage = "register";
-        result = -2;
+        request->error_code = -1007;
+        result = -1007;
         goto done;
     }
+    request->module_registered = 1;
 
     runner_state.suite = suite;
+    runner_state.gp_value = module_info.gp_value;
+    runner_state.environment.version = PSPTEST_ABI_VERSION;
+    runner_state.environment.program_path = child_path;
+    runner_state.environment.root_path = root_path;
     snprintf(runner_state.output_path, sizeof(runner_state.output_path), "%s", result_path);
 
     runner = sceKernelCreateThread("psptest-runner", runner_thread, suite->thread_priority, suite->thread_stack_size, suite->thread_attributes, NULL);
     if (runner < 0) {
         request->failure_stage = "runner-create";
-        result = runner;
+        request->error_code = runner;
+        result = -1008;
         goto done;
     }
 
-    result = sceKernelStartThread(runner, 0, NULL);
-    if (result < 0) {
+    if (write_state(request->mode, request->index) != 0) {
+        request->failure_stage = "state";
+        request->error_code = -1009;
+        result = -1009;
+        goto done;
+    }
+    state_written = 1;
+
+    request->error_code = sceKernelStartThread(runner, 0, NULL);
+    if (request->error_code < 0) {
         request->failure_stage = "runner-start";
+        result = -1010;
         goto done;
     }
 
@@ -440,12 +520,32 @@ static int supervisor_thread(SceSize args, void *argp) {
 
         if (wait_result == 0) {
             int exit_status = sceKernelGetThreadExitStatus(runner);
-            if (supervisor_progress.state == PSPTEST_RUN_COMPLETE) {
+
+            if (runner_state.failure_stage != NULL) {
+                request->failure_stage = runner_state.failure_stage;
+                request->error_code = exit_status;
+                result = -1011;
+                safe_to_unload = 0;
+            } else if (supervisor_progress.state == PSPTEST_RUN_COMPLETE && (runner_state.result == PSPTEST_RESULT_PASS || runner_state.result == PSPTEST_RESULT_FAIL)) {
                 result = runner_state.result;
             } else {
                 request->failure_stage = "runner-exit";
-                result = exit_status != 0 ? exit_status : -4;
+                request->error_code = exit_status;
+                result = -1012;
+                safe_to_unload = 0;
             }
+            break;
+        }
+
+        if (wait_result != (int)SCE_KERNEL_ERROR_WAIT_TIMEOUT) {
+            int terminate_result;
+
+            request->failure_stage = "runner-wait";
+            request->error_code = wait_result;
+            result = -1013;
+            safe_to_unload = 0;
+            terminate_result = sceKernelTerminateDeleteThread(runner);
+            if (terminate_result >= 0) runner = -1;
             break;
         }
 
@@ -453,27 +553,76 @@ static int supervisor_thread(SceSize args, void *argp) {
             last_sequence = sequence;
             last_progress_us = now;
         } else if (now - last_progress_us >= 5000000u) {
+            int terminate_result;
+
             request->failure_stage = "timeout";
-            result = -3;
-            sceKernelTerminateDeleteThread(runner);
-            runner = -1;
+            request->error_code = -1014;
+            result = -1014;
+            safe_to_unload = 0;
+            terminate_result = sceKernelTerminateDeleteThread(runner);
+            if (terminate_result >= 0) {
+                runner = -1;
+            } else {
+                request->failure_stage = "runner-terminate";
+                request->error_code = terminate_result;
+                result = -1015;
+            }
             break;
         }
     }
 
 done:
-    if (runner >= 0) {
-        sceKernelDeleteThread(runner);
-    }
-    if (module_id >= 0) {
-        int stop_result = sceKernelStopModule(module_id, 0, NULL, &module_status, NULL);
-        if (stop_result >= 0) {
-            sceKernelUnloadModule(module_id);
-        } else if (request->failure_stage == NULL) {
-            request->failure_stage = "stop";
-            result = stop_result;
+    if (state_written) {
+        if (write_state("idle", -1) != 0 && result >= 0) {
+            request->failure_stage = "state-clear";
+            request->error_code = -1016;
+            result = -1016;
         }
     }
+
+    if (runner >= 0) {
+        int delete_result = sceKernelDeleteThread(runner);
+        if (delete_result < 0 && result >= 0) {
+            request->failure_stage = "runner-delete";
+            request->error_code = delete_result;
+            result = -1017;
+        }
+    }
+
+    if (module_id >= 0 && module_started && safe_to_unload) {
+        int stop_result;
+
+        module_status = 0;
+        stop_result = sceKernelStopModule(module_id, 0, NULL, &module_status, NULL);
+        if (stop_result < 0) {
+            if (result >= 0) {
+                request->failure_stage = "stop";
+                request->error_code = stop_result;
+                result = -1018;
+            }
+            safe_to_unload = 0;
+        } else if (module_status != 0) {
+            if (result >= 0) {
+                request->failure_stage = "module-stop";
+                request->error_code = module_status;
+                result = -1019;
+            }
+            safe_to_unload = 0;
+        }
+    }
+
+    if (module_id >= 0 && (!module_started || safe_to_unload)) {
+        int unload_result = sceKernelUnloadModule(module_id);
+        if (unload_result < 0 && result >= 0) {
+            request->failure_stage = "unload";
+            request->error_code = unload_result;
+            result = -1020;
+        }
+    } else if (module_id >= 0 && !safe_to_unload) {
+        request->module_quarantined = 1;
+    }
+
+    if (result < 0) remove(result_path);
     request->result = result;
     return 0;
 }
@@ -598,7 +747,6 @@ static void render_running_progress(int module_index) {
     } else {
         pspDebugScreenPrintf("estimating...\n");
     }
-
     pspDebugScreenPrintf("\nResults: ");
     set_color(COLOR_GREEN);
     pspDebugScreenPrintf("PASS %u  ", progress.passed);
@@ -622,9 +770,13 @@ static int launch_test(int index, const char *mode) {
     SupervisorRequest *request = &supervisor_request;
     SceUID supervisor;
     int result;
-    int running_state_written = 0;
 
     if (index < 0 || index >= test_count) return -1;
+    if (launcher_quarantined) {
+        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "quarantined");
+        last_launch_error = -1021;
+        return -1021;
+    }
 
     print_header("Launching");
     pspDebugScreenPrintf("%s\n\n", tests[index].module);
@@ -632,11 +784,11 @@ static int launch_test(int index, const char *mode) {
 
     last_launch_stage[0] = '\0';
     last_launch_error = 0;
+    memset(request, 0, sizeof(*request));
     request->index = index;
     request->result = -1;
-    request->failure_stage = NULL;
-    request->module_loaded = 0;
-    request->module_started = 0;
+    request->error_code = 0;
+    snprintf(request->mode, sizeof(request->mode), "%s", mode);
 
     supervisor = sceKernelCreateThread("psptest-supervisor", supervisor_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL);
     if (supervisor < 0) {
@@ -649,45 +801,59 @@ static int launch_test(int index, const char *mode) {
     if (result < 0) {
         snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-start");
         last_launch_error = result;
-    } else {
-        for (;;) {
-            SceUInt timeout = 100000;
-            result = sceKernelWaitThreadEnd(supervisor, &timeout);
-            __sync_synchronize();
+        sceKernelDeleteThread(supervisor);
+        return result;
+    }
 
-            if (request->module_started) {
-                if (!running_state_written) {
-                    if (write_state(mode, index) != 0) {
-                        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "state");
-                        last_launch_error = -2;
-                        result = -2;
-                        break;
-                    }
-                    running_state_written = 1;
-                }
-                render_running_progress(index);
-            } else if (request->module_loaded) {
-                print_header("Launching");
-                pspDebugScreenPrintf("%s\n\n", tests[index].module);
-                print_note("PRX loaded; registering test suite...");
+    for (;;) {
+        SceUInt timeout = 100000;
+
+        result = sceKernelWaitThreadEnd(supervisor, &timeout);
+        __sync_synchronize();
+
+        if (request->module_started) {
+            render_running_progress(index);
+        } else if (request->module_registered) {
+            print_header("Launching");
+            pspDebugScreenPrintf("%s\n\n", tests[index].module);
+            print_note("PRX registered; preparing test state...");
+        } else if (request->module_loaded) {
+            print_header("Launching");
+            pspDebugScreenPrintf("%s\n\n", tests[index].module);
+            print_note("PRX loaded; registering test suite...");
+        }
+
+        if (result == 0) break;
+        if (result != (int)SCE_KERNEL_ERROR_WAIT_TIMEOUT) {
+            int final_wait = sceKernelWaitThreadEnd(supervisor, NULL);
+            if (final_wait < 0) {
+                launcher_quarantined = 1;
+                snprintf(quarantined_module, sizeof(quarantined_module), "%s", tests[index].module);
+                snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-wait");
+                last_launch_error = final_wait;
+                return -1022;
             }
-
-            if (result == 0) break;
+            break;
         }
     }
 
-    sceKernelDeleteThread(supervisor);
-    if (running_state_written) write_state("idle", -1);
-
-    if (request->failure_stage == NULL && result < 0) {
-        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor");
+    result = sceKernelDeleteThread(supervisor);
+    if (result < 0 && request->result >= 0) {
+        snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", "supervisor-delete");
         last_launch_error = result;
-        return result;
+        return -1023;
     }
+
+    if (request->module_quarantined) {
+        launcher_quarantined = 1;
+        snprintf(quarantined_module, sizeof(quarantined_module), "%s", tests[index].module);
+    }
+
     if (request->result < 0) {
         snprintf(last_launch_stage, sizeof(last_launch_stage), "%s", request->failure_stage != NULL ? request->failure_stage : "module");
-        last_launch_error = request->result;
+        last_launch_error = request->error_code != 0 ? request->error_code : request->result;
     }
+
     return request->result;
 }
 
