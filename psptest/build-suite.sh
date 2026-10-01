@@ -21,8 +21,8 @@ fi
 export PATH="${PSPDEV}/bin:${PATH}"
 PSPSDK="$(psp-config --pspsdk-path)"
 
-if [[ ! -f "${PSPTEST_SOURCE}/psptest.h" || ! -f "${PSPTEST_SOURCE}/psptest.c" ]]; then
-    echo "ERROR: PSPSDK PSPTEST framework source is unavailable." >&2
+if [[ ! -f "${PSPTEST_SOURCE}/psptest.h" || ! -f "${PSPTEST_SOURCE}/psptest.c" || ! -f "${PSPTEST_SOURCE}/psptest_call.S" ]]; then
+    echo "ERROR: PSPSDK PSPTEST framework source is unavailable or incomplete." >&2
     exit 1
 fi
 
@@ -59,7 +59,6 @@ build_namespace() {
     local -a prx_files elf_files
 
     [[ -d "${source_root}" ]] || return 0
-
     mkdir -p "${PROGRAM_ROOT}/results/${namespace}"
 
     while IFS= read -r -d '' makefile; do
@@ -100,143 +99,21 @@ build_namespace() {
             echo "ERROR: PSPTEST ${namespace}/${module} produced ${#elf_files[@]} ELF files; expected exactly one module ELF." >&2
             exit 1
         fi
+
         nm_global="${build_dir}/nm-global.txt"
         nm_undefined="${build_dir}/nm-undefined.txt"
         psp-nm -g "${elf_files[0]}" > "${nm_global}"
         psp-nm -u "${elf_files[0]}" > "${nm_undefined}"
 
-        if grep -Eq '[[:space:]]_start
-        mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
-        if (( ${#prx_files[@]} != 1 )); then
-            echo "ERROR: PSPTEST ${namespace}/${module} produced ${#prx_files[@]} PRX files; expected exactly one module PRX." >&2
-            exit 1
-        fi
-        prx="${prx_files[0]}"
-
-        cp "${prx}" "${program_module_dir}/test.prx"
-        printf 'TEST\t%s/%s\t%s/%s/test.prx\tmodule\n' "${namespace}" "${module}" "${namespace}" "${module}" >> "${MANIFEST}"
-    done < <(find "${source_root}" -mindepth 2 -maxdepth 2 -type f -name Makefile.test -print0 | sort -z)
-}
-
-build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
-build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
-
-PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk" src/psptest psptest)"
-PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages" psptest)"
-
-if [[ "${PSPSDK_TEST_STATE_BEFORE}" != "${PSPSDK_TEST_STATE_AFTER}" ]]; then
-    echo "ERROR: PSPTEST build modified or generated files under PSPSDK PSPTEST source paths." >&2
-    diff -u <(printf '%s\n' "${PSPSDK_TEST_STATE_BEFORE}") <(printf '%s\n' "${PSPSDK_TEST_STATE_AFTER}") || true
-    exit 1
-fi
-if [[ "${PACKAGES_TEST_STATE_BEFORE}" != "${PACKAGES_TEST_STATE_AFTER}" ]]; then
-    echo "ERROR: PSPTEST build modified or generated files under components/psp-packages/psptest." >&2
-    diff -u <(printf '%s\n' "${PACKAGES_TEST_STATE_BEFORE}") <(printf '%s\n' "${PACKAGES_TEST_STATE_AFTER}") || true
-    exit 1
-fi
-
-if ! grep -q '^TEST' "${MANIFEST}"; then
-    echo "ERROR: No PSPTEST modules were discovered." >&2
-    exit 1
-fi
-
-tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP/GAME/psptest
-
-echo "PSPTEST program tree:"
-echo "  ${PROGRAM_ROOT}"
-echo "Archive:"
-echo "  ${ARCHIVE}"
- "${nm_global}"; then
+        if grep -Eq '[[:space:]]_start$' "${nm_global}"; then
             echo "ERROR: PSPTEST ${namespace}/${module} still contains CRT _start; refusing to package it as a loadable test module." >&2
             exit 1
         fi
-        if ! grep -Eq '[[:space:]][Tt][[:space:]]+module_start
-        mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
-        if (( ${#prx_files[@]} != 1 )); then
-            echo "ERROR: PSPTEST ${namespace}/${module} produced ${#prx_files[@]} PRX files; expected exactly one module PRX." >&2
-            exit 1
-        fi
-        prx="${prx_files[0]}"
-
-        cp "${prx}" "${program_module_dir}/test.prx"
-        printf 'TEST\t%s/%s\t%s/%s/test.prx\tmodule\n' "${namespace}" "${module}" "${namespace}" "${module}" >> "${MANIFEST}"
-    done < <(find "${source_root}" -mindepth 2 -maxdepth 2 -type f -name Makefile.test -print0 | sort -z)
-}
-
-build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
-build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
-
-PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk" src/psptest psptest)"
-PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages" psptest)"
-
-if [[ "${PSPSDK_TEST_STATE_BEFORE}" != "${PSPSDK_TEST_STATE_AFTER}" ]]; then
-    echo "ERROR: PSPTEST build modified or generated files under PSPSDK PSPTEST source paths." >&2
-    diff -u <(printf '%s\n' "${PSPSDK_TEST_STATE_BEFORE}") <(printf '%s\n' "${PSPSDK_TEST_STATE_AFTER}") || true
-    exit 1
-fi
-if [[ "${PACKAGES_TEST_STATE_BEFORE}" != "${PACKAGES_TEST_STATE_AFTER}" ]]; then
-    echo "ERROR: PSPTEST build modified or generated files under components/psp-packages/psptest." >&2
-    diff -u <(printf '%s\n' "${PACKAGES_TEST_STATE_BEFORE}") <(printf '%s\n' "${PACKAGES_TEST_STATE_AFTER}") || true
-    exit 1
-fi
-
-if ! grep -q '^TEST' "${MANIFEST}"; then
-    echo "ERROR: No PSPTEST modules were discovered." >&2
-    exit 1
-fi
-
-tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP/GAME/psptest
-
-echo "PSPTEST program tree:"
-echo "  ${PROGRAM_ROOT}"
-echo "Archive:"
-echo "  ${ARCHIVE}"
- "${nm_global}"; then
+        if ! grep -Eq '[[:space:]][Tt][[:space:]]+module_start$' "${nm_global}"; then
             echo "ERROR: PSPTEST ${namespace}/${module} does not contain a direct module_start entry." >&2
             exit 1
         fi
-        if ! grep -Eq '[[:space:]][Tt][[:space:]]+module_stop
-        mapfile -t prx_files < <(find "${build_dir}" -maxdepth 1 -type f -name '*.prx' -print | sort)
-        if (( ${#prx_files[@]} != 1 )); then
-            echo "ERROR: PSPTEST ${namespace}/${module} produced ${#prx_files[@]} PRX files; expected exactly one module PRX." >&2
-            exit 1
-        fi
-        prx="${prx_files[0]}"
-
-        cp "${prx}" "${program_module_dir}/test.prx"
-        printf 'TEST\t%s/%s\t%s/%s/test.prx\tmodule\n' "${namespace}" "${module}" "${namespace}" "${module}" >> "${MANIFEST}"
-    done < <(find "${source_root}" -mindepth 2 -maxdepth 2 -type f -name Makefile.test -print0 | sort -z)
-}
-
-build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
-build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
-
-PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk" src/psptest psptest)"
-PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages" psptest)"
-
-if [[ "${PSPSDK_TEST_STATE_BEFORE}" != "${PSPSDK_TEST_STATE_AFTER}" ]]; then
-    echo "ERROR: PSPTEST build modified or generated files under PSPSDK PSPTEST source paths." >&2
-    diff -u <(printf '%s\n' "${PSPSDK_TEST_STATE_BEFORE}") <(printf '%s\n' "${PSPSDK_TEST_STATE_AFTER}") || true
-    exit 1
-fi
-if [[ "${PACKAGES_TEST_STATE_BEFORE}" != "${PACKAGES_TEST_STATE_AFTER}" ]]; then
-    echo "ERROR: PSPTEST build modified or generated files under components/psp-packages/psptest." >&2
-    diff -u <(printf '%s\n' "${PACKAGES_TEST_STATE_BEFORE}") <(printf '%s\n' "${PACKAGES_TEST_STATE_AFTER}") || true
-    exit 1
-fi
-
-if ! grep -q '^TEST' "${MANIFEST}"; then
-    echo "ERROR: No PSPTEST modules were discovered." >&2
-    exit 1
-fi
-
-tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP/GAME/psptest
-
-echo "PSPTEST program tree:"
-echo "  ${PROGRAM_ROOT}"
-echo "Archive:"
-echo "  ${ARCHIVE}"
- "${nm_global}"; then
+        if ! grep -Eq '[[:space:]][Tt][[:space:]]+module_stop$' "${nm_global}"; then
             echo "ERROR: PSPTEST ${namespace}/${module} does not contain a direct module_stop entry." >&2
             exit 1
         fi
