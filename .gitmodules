@@ -6,7 +6,7 @@
 [submodule "components/psp-toolchain"]
 	path = components/psp-toolchain
 	url = https://github.com/StochasticEagle/psp-toolchain.git
-	branch = dev/fork
+	branch = gcc-16.2
 	shallow = true
 [submodule "components/psp-packages"]
 	path = components/psp-packages
