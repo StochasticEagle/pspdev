@@ -41,7 +41,7 @@ check_psptest_package_prerequisites() {
     )
 
     for relative in "${required[@]}"; do
-        if [[ ! -f "${PSPDEV}/${relative}" ]]; then
+        if [[ ! -s "${PSPDEV}/${relative}" ]]; then
             printf 'ERROR: PSPTEST prerequisite missing: %s\n' "${PSPDEV}/${relative}" >&2
             missing=1
         fi
@@ -69,7 +69,11 @@ PACKAGES_TEST_STATE_BEFORE="$(source_tree_state "${ROOT}/components/psp-packages
 rm -rf "${BUILD_ROOT}" "${PROGRAM_ROOT}"
 mkdir -p "${FRAMEWORK_BUILD}" "${MODULE_BUILD_ROOT}" "${LAUNCHER_BUILD}" "${PROGRAM_ROOT}/results"
 
-cat > "${MODULE_OVERRIDES}" <<'EOF_MAKE'
+cat > "${MODULE_OVERRIDES}" <<EOF_MAKE
+# Always resolve PSP package headers from the installed prefix before GCC's
+# private include-fixed directory, even if module makefiles set CFLAGS.
+override CPPFLAGS += -I"${PSPDEV}/psp/include/oslib" -I"${PSPDEV}/psp/include"
+override CFLAGS += -I"${PSPDEV}/psp/include/oslib" -I"${PSPDEV}/psp/include"
 override LDFLAGS += -nostartfiles
 EOF_MAKE
 

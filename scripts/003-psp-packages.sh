@@ -87,6 +87,26 @@ build_local_packages() {
     return 0
 }
 
+# Check installed files as well as package-manager metadata. --needed remains
+# correct for version upgrades, but cannot repair a missing file when pacman
+# already considers the same package version installed.
+check_installed_package_payload() {
+    local file missing=0
+    for file in \
+        psp/include/oslib/oslib.h \
+        psp/include/oslib/oslmath.h \
+        psp/include/oslib/osl_config.h \
+        psp/include/pspmath.h \
+        psp/lib/libosl.a \
+        psp/lib/psp-math.a; do
+        if [[ ! -s "${PSPDEV}/${file}" ]]; then
+            printf 'ERROR: Missing or empty installed package file: %s\n' "${PSPDEV}/${file}" >&2
+            missing=1
+        fi
+    done
+    (( missing == 0 ))
+}
+
 if [ -n "${LOCAL_PACKAGE_BUILD:-}" ] && [ "${LOCAL_PACKAGE_BUILD}" != "0" ]; then
     # Explicit local mode builds and installs the package set from the checked
     # out recipes and source-component revisions.
@@ -122,6 +142,17 @@ else
     else
         echo "Using local PSP package builds because no matching published repository exists."
         build_local_packages
+    fi
+fi
+
+# Package version updates are normally handled by --needed above. Recover
+# separately from a damaged/incomplete installed payload.
+if ! check_installed_package_payload; then
+    echo 'WARNING: Repairing incomplete package installation from pinned local recipes.' >&2
+    build_local_packages
+    if ! check_installed_package_payload; then
+        echo 'ERROR: PSP package payload remains incomplete after repair.' >&2
+        exit 1
     fi
 fi
 
