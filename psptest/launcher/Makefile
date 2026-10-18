@@ -8,6 +8,7 @@ LIBS = -lpsptest -lpspkubridge
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = PSPTEST
+PSP_EBOOT_ICON := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))/../../components/psp-packages/psptest/icon0.png)
 
 PSPSDK := $(shell psp-config --pspsdk-path)
 PSPTEST_FRAMEWORK_INCDIR ?= $(PSPSDK)/include
