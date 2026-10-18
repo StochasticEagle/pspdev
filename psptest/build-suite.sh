@@ -26,6 +26,37 @@ if [[ ! -f "${PSPTEST_SOURCE}/psptest.h" || ! -f "${PSPTEST_SOURCE}/psptest.c" |
     exit 1
 fi
 
+# PSPTEST exercises the installed package interfaces. Never let GCC fall
+# back to stale OSLib headers under lib/gcc/psp/*/include-fixed when stage 3
+# has not installed the matching headers and archives into the PSP prefix.
+check_psptest_package_prerequisites() {
+    local relative missing=0
+    local -a required=(
+        psp/include/oslib/oslib.h
+        psp/include/oslib/oslmath.h
+        psp/include/oslib/osl_config.h
+        psp/include/pspmath.h
+        psp/lib/libosl.a
+        psp/lib/psp-math.a
+    )
+
+    for relative in "${required[@]}"; do
+        if [[ ! -f "${PSPDEV}/${relative}" ]]; then
+            printf 'ERROR: PSPTEST prerequisite missing: %s\n' "${PSPDEV}/${relative}" >&2
+            missing=1
+        fi
+    done
+
+    if (( missing )); then
+        echo 'ERROR: PSPTEST requires the installed OSLib and PSP-Math packages from PSPDEV stage 3.' >&2
+        echo 'ERROR: Do not use GCC include-fixed copies of package headers; they may be obsolete or incomplete.' >&2
+        echo 'ERROR: Install the matching packages and rebuild PSPTEST: ./build-all.sh p 3 6' >&2
+        return 1
+    fi
+}
+
+check_psptest_package_prerequisites
+
 source_tree_state() {
     local repository="$1"
     shift
