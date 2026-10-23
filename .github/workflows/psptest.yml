@@ -1,6 +1,10 @@
 name: PSPTEST
 
 on:
+  push:
+    branches: [gcc-16.2]
+  pull_request:
+    branches: [gcc-16.2]
   workflow_dispatch:
 
 permissions:
