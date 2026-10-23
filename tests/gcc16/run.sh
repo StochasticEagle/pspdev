@@ -61,10 +61,12 @@ test -f "$PSPSDK/lib/linkfile.prx"
 psp-gcc -O2 -G0 -c "$ROOT/prx-module.c" -o prx-module.o
 # Relocatable PRX generation requires SDK linker scripts and exports.
 # Build through the standard PSPDEV PRX path rather than forcing an EBOOT ABI.
-make -s -C "$ROOT/prx" \
+mkdir -p "$WORK/prx"
+cp "$ROOT/prx/Makefile" "$ROOT/prx/gcc16.exp" "$WORK/prx/"
+make -s -C "$WORK/prx" \
   PSPSDK="$PSPSDK" PSPDEV="$PSPDEV" \
   WORK="$WORK" all
-test -s "$WORK/gcc16-test.prx"
+test -s "$WORK/prx/gcc16-test.prx"
 
 echo "[8/8] Verify symbol and relocation tools"
 psp-nm sdk-c.elf >/dev/null
