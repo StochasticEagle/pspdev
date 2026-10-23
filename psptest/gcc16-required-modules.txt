@@ -7,3 +7,8 @@ pspsdk/kernel-sync
 pspsdk/system-memory
 pspsdk/file-io
 pspsdk/device-services
+pspsdk/cxx-runtime
+pspsdk/compiler-o0
+pspsdk/compiler-o3
+pspsdk/compiler-os
+pspsdk/compiler-lto

@@ -60,3 +60,8 @@ python3 psptest/verify-results.py --manifest build/PSP/GAME/psptest/manifest.tsv
 The runtime gate requires every core SDK case to pass and rejects missing,
 failing, or skipped required cases. CI cannot mark PSP runtime tests as
 passing merely because their PRXs compiled.
+
+The GCC 16.2 requirement list also includes `cxx-runtime` and four
+independent optimization variants (`compiler-o0`, `compiler-o3`,
+`compiler-os`, `compiler-lto`). These produce distinct PRXs and
+distinct runtime results; a compile-only success is insufficient.

@@ -59,6 +59,13 @@ def main():
             if module not in modules:
                 continue
             code = strip_comments(source.read_text(errors="replace"))
+            # Optimization variants include the canonical Allegrex tests.
+            # Count the instantiated cases, not only source definitions.
+            for included in re.findall(r'#include\s+"(\.\./[^"]+\.c)"', code):
+                target = (source.parent / included).resolve()
+                if not target.is_relative_to(root.resolve()) or not target.is_file():
+                    parser.error(f"Invalid test include: {source}: {included}")
+                code += "\n" + strip_comments(target.read_text(errors="replace"))
             case_count += len(re.findall(r"\bPSPTEST_CASE\s*\(", code))
             case_count += len(re.findall(r"\bPSPTEST_INTERACTIVE_CASE\s*\(", code))
             for function in re.findall(r"\bPSPTEST_COVERS\s*\(\s*([A-Za-z_]\w*)\s*\)", code):
@@ -92,8 +99,8 @@ def main():
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    if case_count < 24:
-        parser.error(f"Required regression tests missing: found {case_count} cases, expected at least 24")
+    if case_count < 49:
+        parser.error(f"Required regression tests missing: found {case_count} cases, expected at least 49")
     print(f"PSPTEST: {len(modules)} linked PRXs, {case_count} case declarations, "
           f"{len(covered)}/{len(sdk_names)} declared SDK APIs marked; "
           f"{len(uncovered)} SDK APIs unmarked")
