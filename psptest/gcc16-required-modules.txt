@@ -1,0 +1,9 @@
+# Required GCC 16.2 base SDK PSPTEST modules. One per line.
+pspsdk/framework
+pspsdk/module-smoke
+pspsdk/compiler-abi
+pspsdk/libc-runtime
+pspsdk/kernel-sync
+pspsdk/system-memory
+pspsdk/file-io
+pspsdk/device-services

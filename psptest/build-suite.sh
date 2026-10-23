@@ -134,8 +134,21 @@ build_namespace() {
     done < <(find "${source_root}" -mindepth 2 -maxdepth 2 -type f -name Makefile.test -print0 | sort -z)
 }
 
-build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
-build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
+# The default builds both namespaces; the branch-specific compiler CI can
+# validate PSPSDK without fetching/building optional package dependencies.
+case "${PSPTEST_NAMESPACES:-all}" in
+    all)
+        build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
+        build_namespace "${ROOT}/components/psp-packages/psptest" "packages"
+        ;;
+    pspsdk)
+        build_namespace "${ROOT}/components/pspsdk/psptest" "pspsdk"
+        ;;
+    *)
+        echo "ERROR: PSPTEST_NAMESPACES must be all or pspsdk." >&2
+        exit 1
+        ;;
+esac
 
 PSPSDK_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/pspsdk" src/psptest psptest)"
 PACKAGES_TEST_STATE_AFTER="$(source_tree_state "${ROOT}/components/psp-packages" psptest)"
@@ -154,6 +167,17 @@ fi
 if ! grep -q '^TEST' "${MANIFEST}"; then
     echo "ERROR: No PSPTEST modules were discovered." >&2
     exit 1
+fi
+
+# Ensure a missing or silently skipped module cannot masquerade as a
+# successful toolchain build. For non-GCC16 builds, the list is optional.
+if [[ "${PSPTEST_REQUIRE_GCC16:-0}" == 1 ]]; then
+    python3 "${ROOT}/psptest/audit.py" \
+        --sdk "${ROOT}/components/pspsdk" \
+        --packages "${ROOT}/components/psp-packages" \
+        --manifest "${MANIFEST}" \
+        --required "${ROOT}/psptest/gcc16-required-modules.txt" \
+        --output "${BUILD_ROOT}/coverage.json"
 fi
 
 tar -czf "${ARCHIVE}" -C "${ROOT}/build" PSP/GAME/psptest

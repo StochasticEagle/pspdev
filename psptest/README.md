@@ -31,3 +31,32 @@ The complete Memory Stick tree is:
 and the archive is:
 
     build/psptest.tar.gz
+
+## GCC 16.2 development validation
+
+The `gcc-16.2` branch adds independent core SDK modules owned by PSPSDK;
+the default 15.2 branch and its CI workflow remain untouched.
+
+To build only the core SDK tests (without optional PSP package dependencies):
+
+```bash
+PSPTEST_NAMESPACES=pspsdk PSPTEST_REQUIRE_GCC16=1 ./psptest/build-suite.sh
+```
+
+The required-module gate checks the manifest and built PRXs, and
+`build/psptest/coverage.json` inventories tested API declarations against
+all SDK header declarations. Uncovered functions are listed explicitly.
+This is **static test coverage**, not proof of successful PSP execution.
+
+After running `build/PSP/GAME/psptest/EBOOT.PBP` on hardware, copy its
+results tree and run:
+
+```bash
+python3 psptest/verify-results.py --manifest build/PSP/GAME/psptest/manifest.tsv \
+  --results /path/to/copied/psptest/results \
+  --required psptest/gcc16-required-modules.txt
+```
+
+The runtime gate requires every core SDK case to pass and rejects missing,
+failing, or skipped required cases. CI cannot mark PSP runtime tests as
+passing merely because their PRXs compiled.

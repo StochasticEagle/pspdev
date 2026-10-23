@@ -79,6 +79,15 @@ jobs:
           export PATH="$PSPDEV/bin:$PATH"
           bash tests/gcc16/run.sh
 
+      - name: Build expanded PSPSDK PSPTEST bundle and audit SDK API coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$PSPDEV/bin:$PATH"
+          PSPTEST_NAMESPACES=pspsdk PSPTEST_REQUIRE_GCC16=1 ./psptest/build-suite.sh
+          test -s build/psptest/coverage.json
+          test -s build/psptest.tar.gz
+
       - name: Record build diagnostics
         if: always()
         shell: bash
@@ -87,6 +96,15 @@ jobs:
           (psp-gcc -v > gcc16-diagnostics/gcc-version.txt 2>&1) || true
           (df -h > gcc16-diagnostics/disk.txt 2>&1) || true
           (du -sh components/psp-toolchain/components/psp-toolchain-allegrex/build "$PSPDEV" > gcc16-diagnostics/build-sizes.txt 2>&1) || true
+          if test -f build/psptest/coverage.json; then
+            cp build/psptest/coverage.json gcc16-diagnostics/psptest-coverage.json
+          fi
+          if test -f build/PSP/GAME/psptest/manifest.tsv; then
+            cp build/PSP/GAME/psptest/manifest.tsv gcc16-diagnostics/psptest-manifest.tsv
+          fi
+          if test -d build/psptest/modules/pspsdk; then
+            find build/psptest/modules/pspsdk -name build.log -type f -exec sh -c 'for f; do p="${f#build/psptest/modules/pspsdk/}"; mkdir -p "gcc16-diagnostics/modules/$(dirname "$p")"; cp "$f" "gcc16-diagnostics/modules/$p"; done' sh {} +
+          fi
 
       - name: Upload GCC 16.2 diagnostics
         if: always()
