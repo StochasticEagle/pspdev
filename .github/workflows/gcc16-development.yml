@@ -28,7 +28,7 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Checkout only pinned PSPTEST source modules, shallowly
+      - name: Checkout pinned SDK and PSP package sources, shallowly
         run: |
           set -euo pipefail
           git -c remote.origin.tagOpt=--no-tags submodule update --init --depth 1 \
@@ -37,7 +37,8 @@ jobs:
           toolchain="$(git rev-parse HEAD:components/psp-toolchain)"
           test "$sdk" = "$(git -C components/pspsdk rev-parse HEAD)"
           test "$toolchain" = "$(cat components/pspsdk/ci/gcc16-toolchain-sha.txt)"
-          echo "Pinned SDK: $sdk; pinned GCC16 toolchain: $toolchain"
+          test "$sdk" = "$(cat components/psp-packages/ci/gcc16-sdk-sha.txt)"
+          echo "Verified pinned GCC16 compiler, SDK and package dependencies."
 
       - name: Validate PSPTEST host-side scripts
         run: |
@@ -45,42 +46,42 @@ jobs:
           python3 -m py_compile psptest/audit.py psptest/verify-results.py
           bash -n psptest/build-suite.sh tests/gcc16/run.sh
 
-      - name: Find matching successful PSPSDK CI artifact
+      - name: Find matching successful PSP package CI artifact
         id: sdk
         shell: bash
         run: |
           set -euo pipefail
-          sha="$(git rev-parse HEAD:components/pspsdk)"
-          runs="$(gh api 'repos/StochasticEagle/pspsdk/actions/workflows/compilation.yml/runs?branch=gcc-16.2&status=success&per_page=100')"
+          sha="$(git rev-parse HEAD:components/psp-packages)"
+          runs="$(gh api 'repos/StochasticEagle/psp-packages/actions/workflows/gcc16-artifact.yml/runs?branch=gcc-16.2&status=success&per_page=100')"
           run_id="$(jq -r --arg sha "$sha" '
             [.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success")][0].id // empty' <<< "$runs")"
           if [[ -z "$run_id" ]]; then
-            echo "::error::No validated SDK artifact for pinned commit $sha. Complete upstream toolchain/SDK CI first."
+            echo "::error::No validated package artifact for pinned commit $sha. Complete upstream toolchain, SDK and package CI first."
             exit 1
           fi
-          artifacts="$(gh api "repos/StochasticEagle/pspsdk/actions/runs/$run_id/artifacts?per_page=100")"
-          jq -e '.artifacts[] | select(.name == "gcc16-sdk-ubuntu-x86_64" and .expired == false)' \
+          artifacts="$(gh api "repos/StochasticEagle/psp-packages/actions/runs/$run_id/artifacts?per_page=100")"
+          jq -e '.artifacts[] | select(.name == "gcc16-package-deps-ubuntu-x86_64" and .expired == false)' \
             <<< "$artifacts" >/dev/null || {
-            echo "::error::SDK CI run $run_id has no nonexpired GCC 16.2 artifact."
+            echo "::error::Package CI run $run_id has no nonexpired GCC 16.2 artifact."
             exit 1
           }
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Download validated GCC 16.2 and PSPSDK installation
+      - name: Download validated compiler, SDK and package installation
         uses: actions/download-artifact@v4
         with:
-          name: gcc16-sdk-ubuntu-x86_64
-          repository: StochasticEagle/pspsdk
+          name: gcc16-package-deps-ubuntu-x86_64
+          repository: StochasticEagle/psp-packages
           run-id: ${{ steps.sdk.outputs.run_id }}
           github-token: ${{ secrets.PSP_CI_ARTIFACT_TOKEN || github.token }}
           path: upstream
 
-      - name: Install prebuilt SDK and verify both dependency commits
+      - name: Install prebuilt dependencies and verify all upstream commits
         shell: bash
         run: |
           set -euo pipefail
-          sudo tar -xzf upstream/gcc16-sdk.tar.gz -C /opt
+          sudo tar -xzf upstream/gcc16-package-deps.tar.gz -C /opt
           sudo chown -R "$(id -u):$(id -g)" "$PSPDEV"
           echo "$PSPDEV/bin" >> "$GITHUB_PATH"
           export PATH="$PSPDEV/bin:$PATH"
@@ -92,6 +93,9 @@ jobs:
             "$PSPDEV/share/psp-ci/toolchain-source.txt"
           grep -Fxq "sdk_commit=$(git rev-parse HEAD:components/pspsdk)" \
             "$PSPDEV/share/psp-ci/sdk-source.txt"
+          grep -Fxq "packages_commit=$(git rev-parse HEAD:components/psp-packages)" \
+            "$PSPDEV/share/psp-ci/packages-source.txt"
+          test -s "$PSPDEV/psp/lib/psp-math.a"
           test "$(psp-config --pspsdk-path)" = "$PSPDEV/psp/sdk"
 
       - name: Build-time GCC 16.2 regression probes
@@ -100,11 +104,11 @@ jobs:
           export PATH="$PSPDEV/bin:$PATH"
           bash tests/gcc16/run.sh
 
-      - name: Build actual PSPTEST runtime modules (no SDK rebuild)
+      - name: Build SDK and package PSPTEST runtime modules
         run: |
           set -euo pipefail
           export PATH="$PSPDEV/bin:$PATH"
-          PSPTEST_NAMESPACES=pspsdk PSPTEST_REQUIRE_GCC16=1 ./psptest/build-suite.sh
+          PSPTEST_NAMESPACES=all PSPTEST_REQUIRE_GCC16=1 ./psptest/build-suite.sh
           test -s build/psptest.tar.gz
           test -s build/psptest/coverage.json
           echo "PSPTEST runtime modules compiled. PSP execution remains a separate correctness gate."
@@ -132,3 +136,4 @@ jobs:
             gcc16-diagnostics/
             build/psptest.tar.gz
             build/psptest/modules/pspsdk/*/build.log
+            build/psptest/modules/packages/*/build.log
