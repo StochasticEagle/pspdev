@@ -73,6 +73,13 @@ jobs:
           set -o pipefail
           components/pspsdk/build-and-install.sh 2>&1 | tee ci-logs/pspsdk-build.log
 
+      - name: Validate GCC 16.2 compiler and SDK integration
+        run: |
+          set -euo pipefail
+          export PATH="$PSPDEV/bin:$PATH"
+          mkdir -p ci-logs
+          bash tests/gcc16/run.sh 2>&1 | tee ci-logs/gcc16-probes.log
+
       - name: Build and install OSLib dependency closure
         run: |
           mkdir -p ci-logs
@@ -86,7 +93,9 @@ jobs:
         run: |
           mkdir -p ci-logs
           set -o pipefail
-          ./psptest/build-suite.sh 2>&1 | tee ci-logs/psptest-build.log
+          PSPTEST_REQUIRE_GCC16=1 ./psptest/build-suite.sh 2>&1 | tee ci-logs/psptest-build.log
+          test -s build/psptest/coverage.json
+          test -s build/psptest.tar.gz
 
       - name: Upload PSPTEST diagnostics
         if: always()
