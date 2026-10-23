@@ -30,13 +30,15 @@ typedef enum TestStatus {
     TEST_PENDING = 0,
     TEST_PASS,
     TEST_FAIL,
-    TEST_WARNING
+    TEST_WARNING,
+    TEST_SKIP
 } TestStatus;
 
 typedef struct TestEntry {
     char module[64];
     char relative_path[128];
     char kind[16];
+    int optional;
     TestStatus status;
     unsigned int passed;
     unsigned int failed;
@@ -82,7 +84,8 @@ static const char *status_name(TestStatus status) {
     switch (status) {
         case TEST_PASS: return "PASS";
         case TEST_FAIL: return "FAIL";
-        case TEST_WARNING: return "WARN";
+        case TEST_WARNING: return "ERROR";
+        case TEST_SKIP: return "SKIP";
         default: return "PENDING";
     }
 }
@@ -91,7 +94,8 @@ static unsigned int status_color(TestStatus status) {
     switch (status) {
         case TEST_PASS: return COLOR_GREEN;
         case TEST_FAIL: return COLOR_RED;
-        case TEST_WARNING: return COLOR_AMBER;
+        case TEST_WARNING: return COLOR_RED;
+        case TEST_SKIP: return COLOR_AMBER;
         default: return COLOR_WHITE;
     }
 }
@@ -173,8 +177,15 @@ static int load_manifest(void) {
 
         entry = &tests[test_count];
         memset(entry, 0, sizeof(*entry));
-        if (sscanf(line, "TEST\t%63[^\t]\t%127[^\t]\t%15[^\r\n]", entry->module, entry->relative_path, entry->kind) == 3) {
-            test_count++;
+        {
+            char policy[16] = "required";
+            int fields = sscanf(line, "TEST\t%63[^\t]\t%127[^\t]\t%15[^\t\r\n]\t%15[^\r\n]",
+                entry->module, entry->relative_path, entry->kind, policy);
+            if (fields >= 3 && strcmp(entry->kind, "module") == 0 &&
+                (fields == 3 || strcmp(policy, "required") == 0 || strcmp(policy, "optional") == 0)) {
+                entry->optional = fields == 4 && strcmp(policy, "optional") == 0;
+                test_count++;
+            }
         }
     }
 
@@ -213,8 +224,8 @@ static int load_result(TestEntry *entry) {
             entry->total = total;
             if (fail != 0) {
                 entry->status = TEST_FAIL;
-            } else if (skip != 0) {
-                entry->status = TEST_WARNING;
+            } else if (skip != 0 && total != 0 && skip == total) {
+                entry->status = TEST_SKIP;
             } else {
                 entry->status = TEST_PASS;
             }
@@ -722,6 +733,7 @@ static void render_running_progress(int module_index) {
 
     print_header("Running");
     pspDebugScreenPrintf("Module %d/%d: %s\n", module_index + 1, test_count, tests[module_index].module);
+    pspDebugScreenPrintf("Type: %s  Status: RUNNING\n", tests[module_index].optional ? "OPTIONAL" : "CORE");
     pspDebugScreenPrintf("Cases: %u/%u  %u%%\n[", progress.completed, progress.case_count, percent);
     for (i = 0; i < bar_width; i++) pspDebugScreenPrintf("%c", i < filled ? '#' : '-');
     pspDebugScreenPrintf("]\n\n");
@@ -857,12 +869,13 @@ static int launch_test(int index, const char *mode) {
     return request->result;
 }
 
-static void count_statuses(int *passed, int *failed, int *warnings, int *pending) {
+static void count_statuses(int *passed, int *failed, int *warnings, int *skipped, int *pending) {
     int index;
 
     *passed = 0;
     *failed = 0;
     *warnings = 0;
+    *skipped = 0;
     *pending = 0;
 
     for (index = 0; index < test_count; index++) {
@@ -870,6 +883,7 @@ static void count_statuses(int *passed, int *failed, int *warnings, int *pending
             case TEST_PASS: (*passed)++; break;
             case TEST_FAIL: (*failed)++; break;
             case TEST_WARNING: (*warnings)++; break;
+            case TEST_SKIP: (*skipped)++; break;
             default: (*pending)++; break;
         }
     }
@@ -879,9 +893,10 @@ static void show_summary(void) {
     int passed;
     int failed;
     int warnings;
+    int skipped;
     int pending;
 
-    count_statuses(&passed, &failed, &warnings, &pending);
+    count_statuses(&passed, &failed, &warnings, &skipped, &pending);
     print_header("Results");
 
     set_color(COLOR_WHITE);
@@ -891,18 +906,69 @@ static void show_summary(void) {
     set_color(COLOR_RED);
     pspDebugScreenPrintf("FAIL      %d\n", failed);
     set_color(COLOR_AMBER);
-    pspDebugScreenPrintf("WARN      %d\n", warnings);
+    pspDebugScreenPrintf("ERROR     %d\n", warnings);
+    set_color(COLOR_AMBER);
+    pspDebugScreenPrintf("SKIP      %d\n", skipped);
     set_color(COLOR_WHITE);
-    pspDebugScreenPrintf("PENDING   %d\n\n", pending);
+    pspDebugScreenPrintf("NOT RUN   %d\n\n", pending);
 
     if (interrupted_module[0] != '\0') {
         set_color(COLOR_AMBER);
         pspDebugScreenPrintf("Interrupted: %s\n\n", interrupted_module);
     }
 
-    print_note("WARN includes skipped, incomplete, or interrupted tests.");
+    print_note("SKIP: unsupported/not applicable; ERROR: incomplete/interrupted.");
+    print_note("Core tests run by default; optional tests are opt-in.");
     print_note("Press O to return.");
     while ((read_press() & PSP_CTRL_CIRCLE) == 0) {
+    }
+}
+
+
+static void show_module_details(int module_index) {
+    char suffix[160], path[320];
+    int page = 0;
+    const int rows = 13;
+    snprintf(suffix, sizeof(suffix), "results/%s.log", tests[module_index].module);
+    if (make_path(path, sizeof(path), suffix) != 0) return;
+    for (;;) {
+        FILE *file = fopen(path, "r");
+        char line[384];
+        int cases = 0;
+        unsigned int buttons;
+        print_header("Case Results");
+        pspDebugScreenPrintf("%s [%s]\n", tests[module_index].module,
+            tests[module_index].optional ? "OPTIONAL" : "CORE");
+        set_color(status_color(tests[module_index].status));
+        pspDebugScreenPrintf("%s  Pass %u  Fail %u  Skip %u\n\n",
+            status_name(tests[module_index].status), tests[module_index].passed,
+            tests[module_index].failed, tests[module_index].skipped);
+        set_color(COLOR_WHITE);
+        if (file != NULL) {
+            while (fgets(line, sizeof(line), file) != NULL) {
+                char status[24], name[PSPTEST_CASE_NAME_MAX];
+                if (sscanf(line, "CASE\t%23[^\t]\t%95[^\t\r\n]", status, name) != 2) continue;
+                if (cases >= page * rows && cases < (page + 1) * rows) {
+                    int ok = strcmp(status, "PASS") == 0 || strcmp(status, "INTERACTIVE_PASS") == 0;
+                    int skip = strcmp(status, "SKIP") == 0;
+                    set_color(ok ? COLOR_GREEN : skip ? COLOR_AMBER : COLOR_RED);
+                    pspDebugScreenPrintf("%-5s ", ok ? "PASS" : skip ? "SKIP" : "FAIL");
+                    set_color(COLOR_WHITE);
+                    pspDebugScreenPrintf("%s\n", name);
+                }
+                cases++;
+            }
+            fclose(file);
+            if (cases != 0) pspDebugScreenPrintf("\nCases %d-%d of %d\n",
+                page * rows + 1, (page + 1) * rows < cases ? (page + 1) * rows : cases, cases);
+        } else {
+            print_note("No completed runtime result has been recorded.");
+        }
+        print_note("LEFT/RIGHT pages   O return");
+        buttons = read_press();
+        if (buttons & PSP_CTRL_CIRCLE) return;
+        if ((buttons & PSP_CTRL_RIGHT) && (page + 1) * rows < cases) page++;
+        if ((buttons & PSP_CTRL_LEFT) && page > 0) page--;
     }
 }
 
@@ -926,13 +992,14 @@ static void browse_tests(void) {
         print_header("Browse");
         for (index = first; index < last; index++) {
             set_color(index == selected ? COLOR_AMBER : COLOR_WHITE);
-            pspDebugScreenPrintf("%c %-30s ", index == selected ? '>' : ' ', tests[index].module);
+            pspDebugScreenPrintf("%c %-28s %-3s ", index == selected ? '>' : ' ',
+                tests[index].module, tests[index].optional ? "OPT" : "REQ");
             set_color(status_color(tests[index].status));
             pspDebugScreenPrintf("%s\n", status_name(tests[index].status));
         }
 
         pspDebugScreenPrintf("\n");
-        print_note("UP/DOWN select   X run   O back");
+        print_note("UP/DOWN select   X run   TRIANGLE results   O back");
 
         buttons = read_press();
         if ((buttons & PSP_CTRL_UP) != 0) {
@@ -952,7 +1019,10 @@ static void browse_tests(void) {
                 while ((read_press() & PSP_CTRL_CIRCLE) == 0) {
                 }
             }
-            return;
+            load_result(&tests[selected]);
+            show_module_details(selected);
+        } else if ((buttons & PSP_CTRL_TRIANGLE) != 0) {
+            show_module_details(selected);
         } else if ((buttons & PSP_CTRL_CIRCLE) != 0) {
             return;
         }
@@ -1001,11 +1071,12 @@ int main(int argc, char **argv) {
         int passed;
         int failed;
         int warnings;
+        int skipped;
         int pending;
         unsigned int buttons;
 
         load_results();
-        count_statuses(&passed, &failed, &warnings, &pending);
+        count_statuses(&passed, &failed, &warnings, &skipped, &pending);
 
         print_header("Hardware Test Launcher");
 
@@ -1016,9 +1087,11 @@ int main(int argc, char **argv) {
         set_color(COLOR_RED);
         pspDebugScreenPrintf("FAIL %d   ", failed);
         set_color(COLOR_AMBER);
-        pspDebugScreenPrintf("WARN %d   ", warnings);
+        pspDebugScreenPrintf("ERROR %d   ", warnings);
+        set_color(COLOR_AMBER);
+        pspDebugScreenPrintf("SKIP %d   ", skipped);
         set_color(COLOR_WHITE);
-        pspDebugScreenPrintf("PENDING %d\n\n", pending);
+        pspDebugScreenPrintf("NOT RUN %d\n\n", pending);
 
         if (interrupted_module[0] != '\0') {
             set_color(COLOR_AMBER);
@@ -1026,8 +1099,9 @@ int main(int argc, char **argv) {
         }
 
         set_color(COLOR_WHITE);
-        pspDebugScreenPrintf("X       Run all automated tests\n");
-        pspDebugScreenPrintf("O       Browse tests\n");
+        pspDebugScreenPrintf("X       Run core verification suites\n");
+        pspDebugScreenPrintf("SELECT  Run optional suites (WLAN/audio/etc.)\n");
+        pspDebugScreenPrintf("O       Browse modules and case results\n");
         pspDebugScreenPrintf("[]      Rerun failures\n");
         pspDebugScreenPrintf("TRIANGLE Results\n");
         pspDebugScreenPrintf("START   Exit\n\n");
@@ -1037,12 +1111,23 @@ int main(int argc, char **argv) {
         if ((buttons & PSP_CTRL_CROSS) != 0) {
             int index;
             for (index = 0; index < test_count; index++) {
-                int run_result = launch_test(index, "all");
+                int run_result;
+                if (tests[index].optional) continue;
+                run_result = launch_test(index, "all");
                 load_result(&tests[index]);
                 if (run_result < 0) {
                     tests[index].status = TEST_WARNING;
                     break;
                 }
+            }
+        } else if ((buttons & PSP_CTRL_SELECT) != 0) {
+            int index;
+            for (index = 0; index < test_count; index++) {
+                int run_result;
+                if (!tests[index].optional) continue;
+                run_result = launch_test(index, "optional");
+                load_result(&tests[index]);
+                if (run_result < 0) { tests[index].status = TEST_WARNING; break; }
             }
         } else if ((buttons & PSP_CTRL_CIRCLE) != 0) {
             browse_tests();
