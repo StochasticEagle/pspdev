@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
+    branches-ignore:
+      - gcc-16.2
   pull_request:
+    branches-ignore:
+      - gcc-16.2
   workflow_dispatch:
 
 permissions:
