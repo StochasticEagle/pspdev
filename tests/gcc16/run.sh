@@ -11,6 +11,13 @@ command -v psp-objdump >/dev/null
 test "$(psp-gcc -dumpmachine)" = "psp"
 test "$(psp-gcc -dumpfullversion)" = "16.2.0"
 
+# Match the standard PSPSDK build fragments without overriding GCC's
+# C++ standard-library/newlib include order.
+PSPSDK="$(psp-config --pspsdk-path)"
+test -f "$PSPSDK/include/pspkernel.h"
+SDK_INCLUDES=(-isystem "$PSPSDK/include")
+SDK_LIBS=(-L"$PSPSDK/lib" -L"$PSPDEV/psp/lib")
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -41,24 +48,23 @@ done
 echo "[4/8] C++ runtime, exceptions, RTTI and static initialization"
 for opt in O0 O2 O3 Os; do
   psp-g++ -std=c++20 "-$opt" -Wall -Wextra \
-    "$ROOT/sdk-cxx.cpp" -o "sdk-cxx-$opt.elf"
+    "${SDK_INCLUDES[@]}" "${SDK_LIBS[@]}" "$ROOT/sdk-cxx.cpp" -o "sdk-cxx-$opt.elf"
   psp-nm "sdk-cxx-$opt.elf" | grep -Eq 'main|module_start|_start'
 done
 
 echo "[5/8] Compile and link with link-time optimization"
 psp-g++ -std=c++20 -O2 -flto -c "$ROOT/lto.cpp" -o lto.o
-psp-g++ -std=c++20 -O2 -flto "$ROOT/sdk-cxx.cpp" lto.o -o sdk-lto.elf
+psp-g++ -std=c++20 -O2 -flto "${SDK_INCLUDES[@]}" "${SDK_LIBS[@]}" "$ROOT/sdk-cxx.cpp" lto.o -o sdk-lto.elf
 
 echo "[6/8] PSP SDK C EBOOT link"
-psp-gcc -std=c11 -O2 "$ROOT/sdk-c.c" -o sdk-c.elf
+psp-gcc -std=c11 -O2 "${SDK_INCLUDES[@]}" "${SDK_LIBS[@]}" "$ROOT/sdk-c.c" -o sdk-c.elf
 psp-objdump -f sdk-c.elf | grep -q 'elf32'
 psp-objdump -f sdk-cxx-O2.elf | grep -q 'elf32'
 
 echo "[7/8] SDK PRX / relocatable module link"
-PSPSDK="$(psp-config --pspsdk-path)"
 test -f "$PSPSDK/lib/prxspecs"
 test -f "$PSPSDK/lib/linkfile.prx"
-psp-gcc -O2 -G0 -c "$ROOT/prx-module.c" -o prx-module.o
+psp-gcc -O2 -G0 "${SDK_INCLUDES[@]}" -c "$ROOT/prx-module.c" -o prx-module.o
 # Relocatable PRX generation requires SDK linker scripts and exports.
 # Build through the standard PSPDEV PRX path rather than forcing an EBOOT ABI.
 mkdir -p "$WORK/prx"
