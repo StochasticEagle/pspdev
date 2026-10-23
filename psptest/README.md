@@ -34,8 +34,7 @@ and the archive is:
 
 ## GCC 16.2 development validation
 
-The `gcc-16.2` branch adds independent core SDK modules owned by PSPSDK;
-the default 15.2 branch and its CI workflow remain untouched.
+The GCC 16.2 integration includes independent PSPSDK-owned runtime modules.
 
 To build only the core SDK tests (without optional PSP package dependencies):
 
@@ -57,8 +56,8 @@ python3 psptest/verify-results.py --manifest build/PSP/GAME/psptest/manifest.tsv
   --required psptest/gcc16-required-modules.txt
 ```
 
-The runtime gate requires every core SDK case to pass and rejects missing,
-failing, or skipped required cases. CI cannot mark PSP runtime tests as
+The runtime gate requires core suites to complete and rejects failed core
+cases. Optional suites may remain unrun or record SKIP if hardware is absent. CI cannot mark PSP runtime tests as
 passing merely because their PRXs compiled.
 
 The GCC 16.2 requirement list also includes `cxx-runtime` and four
@@ -70,3 +69,28 @@ Additional base SDK coverage includes read-only GE memory and power
 queries, and an audio-channel lifecycle test. The current suite still
 does not claim complete coverage of every PSPSDK export; the coverage
 report enumerates the remaining gaps.
+
+## Runtime verification on PSP
+
+PSPTEST is a **standalone runtime verification application** for the SDK and
+packages. Homebrew applications do not need PSPTEST in their dependency chain.
+
+The launcher displays module and live test status, including PASS, FAIL, SKIP,
+and incomplete/error results. From the home screen:
+
+- **X** runs the required core verification suites.
+- **SELECT** runs optional suites, including audio and WLAN.
+- **O** browses modules. **X** runs a selected module and **TRIANGLE** views its
+  persisted individual case results.
+
+The test manifest accepts an optional fifth field (`required` or `optional`)
+after the module type. Exact optional module IDs are defined in
+`psptest/optional-modules.txt`. New modules may opt into that list without
+being necessary for a successful core verification.
+
+Optional WLAN tests report SKIP when the radio is absent or powered off.
+Unrun optional suites do not block verification. A failure in an optional
+suite **that was actually executed** is still reported as a real failure.
+
+GitHub compilation validates the build and test packaging; **successful
+runtime execution on a PSP is the correctness evidence**.

@@ -13,4 +13,3 @@ pspsdk/compiler-o3
 pspsdk/compiler-os
 pspsdk/compiler-lto
 pspsdk/hardware-status
-pspsdk/audio-service

@@ -30,7 +30,7 @@ def main():
         parser.error("Invalid PSPTEST manifest")
     for line in records[1:]:
         parts = line.split("\t")
-        if len(parts) != 4 or parts[0] != "TEST" or parts[3] != "module":
+        if len(parts) not in (4, 5) or parts[0] != "TEST" or parts[3] != "module" or (len(parts) == 5 and parts[4] not in ("required", "optional")):
             parser.error(f"Invalid PSPTEST manifest record: {line}")
         name, path = parts[1:3]
         if name in modules:
@@ -40,9 +40,12 @@ def main():
             parser.error(f"Unsafe module path: {path}")
         if not binary.is_file() or binary.stat().st_size == 0:
             parser.error(f"Missing PRX: {binary}")
-        modules[name] = path
+        modules[name] = {"path": path, "policy": parts[4] if len(parts) == 5 else "required"}
 
     missing = sorted(set(required) - modules.keys())
+    incorrectly_optional = sorted(name for name in required if name in modules and modules[name]["policy"] == "optional")
+    if incorrectly_optional:
+        parser.error("Core modules incorrectly marked optional: " + ", ".join(incorrectly_optional))
     if missing:
         parser.error(f"Missing mandatory PSPTEST modules: {', '.join(missing)}")
 
@@ -92,6 +95,8 @@ def main():
         "sdk_api_marked": len(covered),
         "sdk_api_unmarked": len(uncovered),
         "module_names": sorted(modules),
+        "module_policy": {name: entry["policy"] for name, entry in sorted(modules.items())},
+        "optional_module_count": sum(e["policy"] == "optional" for e in modules.values()),
         "required": required,
         "covered": [{"api": name, "modules": sorted(covered_by[name])} for name in covered],
         "uncovered": [{"api": name, "headers": sorted(api_headers[name])} for name in uncovered],

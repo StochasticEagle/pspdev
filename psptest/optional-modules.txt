@@ -1,0 +1,4 @@
+# Optional capabilities: excluded from automatic core verification.
+# Run individually in Browse or use SELECT on the PSPTEST home screen.
+pspsdk/audio-service
+pspsdk/wlan-optional

@@ -52,6 +52,16 @@ make -C "${LAUNCHER_BUILD}" -f "${ROOT}/psptest/launcher/Makefile" VPATH="${ROOT
 cp "${LAUNCHER_BUILD}/EBOOT.PBP" "${PROGRAM_ROOT}/EBOOT.PBP"
 printf 'PSPTEST_MANIFEST\t1\n' > "${MANIFEST}"
 
+optional_module() {
+    local candidate="$1"
+    local configured
+    while IFS= read -r configured || [[ -n "$configured" ]]; do
+        [[ -z "$configured" || "$configured" == \#* ]] && continue
+        [[ "$candidate" == "$configured" ]] && return 0
+    done < "${ROOT}/psptest/optional-modules.txt"
+    return 1
+}
+
 build_namespace() {
     local source_root="$1"
     local namespace="$2"
@@ -130,7 +140,9 @@ build_namespace() {
         prx="${prx_files[0]}"
 
         cp "${prx}" "${program_module_dir}/test.prx"
-        printf 'TEST\t%s/%s\t%s/%s/test.prx\tmodule\n' "${namespace}" "${module}" "${namespace}" "${module}" >> "${MANIFEST}"
+        local policy="required"
+        if optional_module "${namespace}/${module}"; then policy="optional"; fi
+        printf 'TEST\t%s/%s\t%s/%s/test.prx\tmodule\t%s\n' "${namespace}" "${module}" "${namespace}" "${module}" "${policy}" >> "${MANIFEST}"
     done < <(find "${source_root}" -mindepth 2 -maxdepth 2 -type f -name Makefile.test -print0 | sort -z)
 }
 
