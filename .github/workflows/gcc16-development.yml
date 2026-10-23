@@ -42,6 +42,13 @@ jobs:
           printf 'Building GCC 16.2 source at %s\n' "$(git -C "$gcc" rev-parse HEAD)"
           df -h .
 
+      - name: Validate test and build harness syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile psptest/audit.py psptest/verify-results.py
+          bash -n psptest/build-suite.sh tests/gcc16/run.sh
+
       - name: Install source build dependencies
         run: |
           ./prepare.sh

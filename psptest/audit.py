@@ -99,8 +99,8 @@ def main():
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    if case_count < 49:
-        parser.error(f"Required regression tests missing: found {case_count} cases, expected at least 49")
+    if case_count < 53:
+        parser.error(f"Required regression tests missing: found {case_count} cases, expected at least 53")
     print(f"PSPTEST: {len(modules)} linked PRXs, {case_count} case declarations, "
           f"{len(covered)}/{len(sdk_names)} declared SDK APIs marked; "
           f"{len(uncovered)} SDK APIs unmarked")

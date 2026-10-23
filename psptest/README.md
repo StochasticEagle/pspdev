@@ -65,3 +65,8 @@ The GCC 16.2 requirement list also includes `cxx-runtime` and four
 independent optimization variants (`compiler-o0`, `compiler-o3`,
 `compiler-os`, `compiler-lto`). These produce distinct PRXs and
 distinct runtime results; a compile-only success is insufficient.
+
+Additional base SDK coverage includes read-only GE memory and power
+queries, and an audio-channel lifecycle test. The current suite still
+does not claim complete coverage of every PSPSDK export; the coverage
+report enumerates the remaining gaps.
