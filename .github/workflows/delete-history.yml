@@ -1,0 +1,57 @@
+name: Delete CI History
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  delete-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Delete completed historical runs
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const currentRun = context.runId;
+            let deleted = 0;
+            let failed = 0;
+
+            // Fetch batches from the first page because deletion shifts the pages.
+            // Stop when no more deletable runs remain.
+            while (true) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, per_page: 100
+              });
+              const candidates = data.workflow_runs.filter(run =>
+                run.id !== currentRun && run.status === 'completed'
+              );
+              if (!candidates.length) break;
+
+              let deletedThisPass = 0;
+              for (const run of candidates) {
+                try {
+                  await github.rest.actions.deleteWorkflowRun({
+                    owner, repo, run_id: run.id
+                  });
+                  deleted++;
+                  deletedThisPass++;
+                } catch (error) {
+                  failed++;
+                  core.warning(`Unable to delete run ${run.id}: ${error.message}`);
+                }
+              }
+
+              core.info(`Deleted ${deleted} runs; failed attempts: ${failed}`);
+              if (deletedThisPass === 0) {
+                core.setFailed('No deletions succeeded in this batch; stopping to avoid a loop.');
+                break;
+              }
+            }
+
+            core.info(`Finished. Deleted ${deleted} completed workflow runs.`);
+            if (failed) core.warning(`${failed} deletion attempts failed.`);
