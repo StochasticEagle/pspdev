@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: psptest-${{ github.ref }}
@@ -30,23 +31,41 @@ jobs:
       - name: Install host dependencies
         run: ./prepare.sh
 
-      - name: Install prebuilt PSP toolchain
+      - name: Resolve GCC 16.2 compiler pinned by PSPDEV
+        id: toolchain
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PSP_CI_ARTIFACT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD:components/psp-toolchain)"
+          runs="$(gh api 'repos/StochasticEagle/psp-toolchain/actions/workflows/gcc16-artifact.yml/runs?branch=gcc-16.2&status=success&per_page=100')"
+          run_id="$(jq -r --arg sha "$sha" '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success")][0].id // empty' <<< "$runs")"
+          [[ -n "$run_id" ]] || { echo "::error::GCC 16.2 compiler artifact unavailable for $sha"; exit 1; }
+          gh api "repos/StochasticEagle/psp-toolchain/actions/runs/$run_id/artifacts?per_page=100" |
+            jq -e '.artifacts[] | select(.name == "gcc16-toolchain-ubuntu-x86_64" and .expired == false)' >/dev/null
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download validated GCC 16.2 compiler
+        uses: actions/download-artifact@v4
+        with:
+          repository: StochasticEagle/psp-toolchain
+          run-id: ${{ steps.toolchain.outputs.run_id }}
+          name: gcc16-toolchain-ubuntu-x86_64
+          github-token: ${{ secrets.PSP_CI_ARTIFACT_TOKEN || github.token }}
+          path: upstream
+
+      - name: Install GCC 16.2 compiler
         run: |
           export PSPDEV=/opt/pspdev
-          archive="$RUNNER_TEMP/psp-toolchain-ubuntu-x86_64.tar.gz"
-
-          sudo rm -rf "$PSPDEV"
-          wget -q \
-            https://github.com/StochasticEagle/psp-toolchain/releases/latest/download/psp-toolchain-ubuntu-x86_64.tar.gz \
-            -O "$archive"
-          sudo tar -xzf "$archive" -C /opt
+          sudo tar -xzf upstream/gcc16-toolchain.tar.gz -C /opt
           sudo chown -R "$(id -u):$(id -g)" "$PSPDEV"
-
           echo "PSPDEV=$PSPDEV" >> "$GITHUB_ENV"
           echo "$PSPDEV/bin" >> "$GITHUB_PATH"
-
           export PATH="$PSPDEV/bin:$PATH"
-          test "$(psp-gcc -dumpmachine)" = "psp"
+          test "$(psp-gcc -dumpmachine)" = psp
+          test "$(psp-gcc -dumpfullversion)" = 16.2.0
+          grep -Fxq "toolchain_commit=$(git rev-parse HEAD:components/psp-toolchain)" "$PSPDEV/share/psp-ci/toolchain-source.txt"
 
       - name: Build pinned PSPSDK
         run: |
