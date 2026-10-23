@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
 
     steps:
       - uses: actions/checkout@v6
@@ -41,14 +41,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PSP_CI_ARTIFACT_TOKEN || github.token }}
         run: |
-          set -euo pipefail
-          sha="$(git rev-parse HEAD:components/psp-toolchain)"
-          runs="$(gh api 'repos/StochasticEagle/psp-toolchain/actions/workflows/gcc16-artifact.yml/runs?branch=gcc-16.2&status=success&per_page=100')"
-          run_id="$(jq -r --arg sha "$sha" '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success")][0].id // empty' <<< "$runs")"
-          [[ -n "$run_id" ]] || { echo "::error::GCC 16.2 compiler artifact unavailable for $sha"; exit 1; }
-          gh api "repos/StochasticEagle/psp-toolchain/actions/runs/$run_id/artifacts?per_page=100" |
-            jq -e '.artifacts[] | select(.name == "gcc16-toolchain-ubuntu-x86_64" and .expired == false)' >/dev/null
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          bash ci/resolve-gcc16-artifact.sh
 
       - name: Download validated GCC 16.2 compiler
         uses: actions/download-artifact@v4
