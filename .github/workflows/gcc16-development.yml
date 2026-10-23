@@ -1,122 +1,134 @@
-name: GCC 16.2 development validation
+name: GCC 16.2 PSPTEST validation
 
 on:
   push:
-    branches:
-      - gcc-16.2
+    branches: [gcc-16.2]
+  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: gcc16-source-${{ github.ref }}
+  group: gcc16-psptest-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  source-build-and-sdk:
-    # This workflow exists only on gcc-16.2. It does not install release
-    # artifacts or alter the regular/default-branch PSPDEV workflow.
+  psptest:
     if: github.ref == 'refs/heads/gcc-16.2'
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 90
     env:
-      PSPDEV: ${{ github.workspace }}/_gcc16-pspdev
+      PSPDEV: /opt/pspdev
+      GH_TOKEN: ${{ secrets.PSP_CI_ARTIFACT_TOKEN || github.token }}
     steps:
-      - name: Check out the GCC 16.2 development dependency chain
+      - name: Checkout PSPDEV (without unnecessary compiler sources)
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          submodules: recursive
+          submodules: false
 
-      - name: Confirm pinned GCC 16.2 and branch dependency chain
-        shell: bash
+      - name: Checkout only pinned PSPTEST source modules, shallowly
         run: |
           set -euo pipefail
-          toolchain=components/psp-toolchain
-          allegrex="$toolchain/components/psp-toolchain-allegrex"
-          gcc="$allegrex/components/gcc"
-          test "$(cat "$gcc/gcc/BASE-VER")" = "16.2.0"
-          test "$(git -C "$gcc" rev-parse HEAD)" = "$(git -C "$allegrex" rev-parse HEAD:components/gcc)"
-          test "$(git -C "$allegrex" rev-parse HEAD)" = "$(git -C "$toolchain" rev-parse HEAD:components/psp-toolchain-allegrex)"
-          test "$(git -C "$toolchain" rev-parse HEAD)" = "$(git rev-parse HEAD:components/psp-toolchain)"
-          printf 'Building GCC 16.2 source at %s\n' "$(git -C "$gcc" rev-parse HEAD)"
-          df -h .
+          git -c remote.origin.tagOpt=--no-tags submodule update --init --depth 1 \
+            components/pspsdk components/psp-packages
+          sdk="$(git rev-parse HEAD:components/pspsdk)"
+          toolchain="$(git rev-parse HEAD:components/psp-toolchain)"
+          test "$sdk" = "$(git -C components/pspsdk rev-parse HEAD)"
+          test "$toolchain" = "$(cat components/pspsdk/ci/gcc16-toolchain-sha.txt)"
+          echo "Pinned SDK: $sdk; pinned GCC16 toolchain: $toolchain"
 
-      - name: Validate test and build harness syntax
-        shell: bash
+      - name: Validate PSPTEST host-side scripts
         run: |
           set -euo pipefail
           python3 -m py_compile psptest/audit.py psptest/verify-results.py
           bash -n psptest/build-suite.sh tests/gcc16/run.sh
 
-      - name: Install source build dependencies
-        run: |
-          ./prepare.sh
-          sudo apt-get install -y --no-install-recommends \
-            gawk libtool-bin libarchive-tools autopoint fakeroot
-
-      - name: Build pinned binutils, GCC 16.2, newlib, pthread and libstdc++
+      - name: Find matching successful PSPSDK CI artifact
+        id: sdk
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$PSPDEV"
+          sha="$(git rev-parse HEAD:components/pspsdk)"
+          runs="$(gh api 'repos/StochasticEagle/pspsdk/actions/workflows/compilation.yml/runs?branch=gcc-16.2&status=success&per_page=100')"
+          run_id="$(jq -r --arg sha "$sha" '
+            [.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success")][0].id // empty' <<< "$runs")"
+          if [[ -z "$run_id" ]]; then
+            echo "::error::No validated SDK artifact for pinned commit $sha. Complete upstream toolchain/SDK CI first."
+            exit 1
+          fi
+          artifacts="$(gh api "repos/StochasticEagle/pspsdk/actions/runs/$run_id/artifacts?per_page=100")"
+          jq -e '.artifacts[] | select(.name == "gcc16-sdk-ubuntu-x86_64" and .expired == false)' \
+            <<< "$artifacts" >/dev/null || {
+            echo "::error::SDK CI run $run_id has no nonexpired GCC 16.2 artifact."
+            exit 1
+          }
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download validated GCC 16.2 and PSPSDK installation
+        uses: actions/download-artifact@v4
+        with:
+          name: gcc16-sdk-ubuntu-x86_64
+          repository: StochasticEagle/pspsdk
+          run-id: ${{ steps.sdk.outputs.run_id }}
+          github-token: ${{ secrets.PSP_CI_ARTIFACT_TOKEN || github.token }}
+          path: upstream
+
+      - name: Install prebuilt SDK and verify both dependency commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo tar -xzf upstream/gcc16-sdk.tar.gz -C /opt
+          sudo chown -R "$(id -u):$(id -g)" "$PSPDEV"
           echo "$PSPDEV/bin" >> "$GITHUB_PATH"
           export PATH="$PSPDEV/bin:$PATH"
-          components/psp-toolchain/components/psp-toolchain-allegrex/toolchain.sh
-          test "$(psp-gcc -dumpmachine)" = "psp"
-          test "$(psp-gcc -dumpfullversion)" = "16.2.0"
-          df -h .
-
-      - name: Build pinned PSPSDK from source
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="$PSPDEV/bin:$PATH"
-          (
-            cd components/pspsdk
-            ./build-and-install.sh
-          )
+          test "$(psp-gcc -dumpmachine)" = psp
+          test "$(psp-gcc -dumpfullversion)" = 16.2.0
           test -f "$PSPDEV/psp/sdk/lib/libpspsdk.a"
           test -f "$PSPDEV/psp/sdk/lib/build.mak"
-          df -h .
+          grep -Fxq "toolchain_commit=$(git rev-parse HEAD:components/psp-toolchain)" \
+            "$PSPDEV/share/psp-ci/toolchain-source.txt"
+          grep -Fxq "sdk_commit=$(git rev-parse HEAD:components/pspsdk)" \
+            "$PSPDEV/share/psp-ci/sdk-source.txt"
+          test "$(psp-config --pspsdk-path)" = "$PSPDEV/psp/sdk"
 
-      - name: Run GCC 16.2 compiler and SDK regression tests
-        shell: bash
+      - name: Build-time GCC 16.2 regression probes
         run: |
+          set -euo pipefail
           export PATH="$PSPDEV/bin:$PATH"
           bash tests/gcc16/run.sh
 
-      - name: Build expanded PSPSDK PSPTEST bundle and audit SDK API coverage
-        shell: bash
+      - name: Build actual PSPTEST runtime modules (no SDK rebuild)
         run: |
           set -euo pipefail
           export PATH="$PSPDEV/bin:$PATH"
           PSPTEST_NAMESPACES=pspsdk PSPTEST_REQUIRE_GCC16=1 ./psptest/build-suite.sh
-          test -s build/psptest/coverage.json
           test -s build/psptest.tar.gz
+          test -s build/psptest/coverage.json
+          echo "PSPTEST runtime modules compiled. PSP execution remains a separate correctness gate."
 
-      - name: Record build diagnostics
+      - name: Capture PSPTEST CI diagnostics
         if: always()
-        shell: bash
         run: |
           mkdir -p gcc16-diagnostics
           (psp-gcc -v > gcc16-diagnostics/gcc-version.txt 2>&1) || true
           (df -h > gcc16-diagnostics/disk.txt 2>&1) || true
-          (du -sh components/psp-toolchain/components/psp-toolchain-allegrex/build "$PSPDEV" > gcc16-diagnostics/build-sizes.txt 2>&1) || true
           if test -f build/psptest/coverage.json; then
             cp build/psptest/coverage.json gcc16-diagnostics/psptest-coverage.json
           fi
           if test -f build/PSP/GAME/psptest/manifest.tsv; then
-            cp build/PSP/GAME/psptest/manifest.tsv gcc16-diagnostics/psptest-manifest.tsv
-          fi
-          if test -d build/psptest/modules/pspsdk; then
-            find build/psptest/modules/pspsdk -name build.log -type f -exec sh -c 'for f; do p="${f#build/psptest/modules/pspsdk/}"; mkdir -p "gcc16-diagnostics/modules/$(dirname "$p")"; cp "$f" "gcc16-diagnostics/modules/$p"; done' sh {} +
+            cp build/PSP/GAME/psptest/manifest.tsv gcc16-diagnostics/manifest.tsv
           fi
 
-      - name: Upload GCC 16.2 diagnostics
+      - uses: actions/upload-artifact@v7
         if: always()
-        uses: actions/upload-artifact@v7
         with:
-          name: gcc16-development-diagnostics
-          path: gcc16-diagnostics/
+          name: gcc16-psptest-results
           if-no-files-found: warn
+          retention-days: 30
+          path: |
+            gcc16-diagnostics/
+            build/psptest.tar.gz
+            build/psptest/modules/pspsdk/*/build.log
